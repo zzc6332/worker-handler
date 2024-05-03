@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "lib": [
+      "ESNext",
+      "WebWorker",
+      "WebWorker.ImportScripts",
+      "Webworker.Iterable",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "noImplicitAny": true,
+    "module": "ESNext",
+    "target": "es5",
+    "allowJs": true,
+    "baseUrl": ".",
+    "outDir": "./dist/release",
+    "declaration": true,
+    "declarationDir": "./dist/release/types"
+  },
+  "include": ["src"],
+  "exclude": ["src/demo"],
+  "references": [{ "path": "./tsconfig.demo.json" }]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "worker-handler",
+  "version": "0.0.1",
+  "description": "",
+  "exports": {
+    ".": "./main.js",
+    "./main": "./main.js",
+    "./worker": "./worker.js"
+  },
+  "keywords": [],
+  "author": "zzc6332",
+  "license": "ISC"
+}
