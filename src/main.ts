@@ -5,8 +5,8 @@ import {
   ActionResult,
 } from "./worker";
 
-export class WorkerHandler<T extends CommonActions> {
-  worker: Worker;
+export class WorkerHandler<A extends CommonActions> {
+  private worker: Worker;
 
   private id: number = 0;
 
@@ -22,31 +22,34 @@ export class WorkerHandler<T extends CommonActions> {
     }
   }
 
-  private postMsgToWorker<K extends keyof T>(
+  get instance() {
+    return this.worker;
+  }
+
+  private postMsgToWorker<K extends keyof A>(
     actionName: K,
-    ...payload: Parameters<T[K]>
+    transfers: Transferable[],
+    ...payload: Parameters<A[K]>
   ) {
     this.id++;
     const message = { actionName, payload, id: this.id };
-    this.worker.postMessage(message);
+    this.worker.postMessage(message, transfers);
     return message.id;
   }
 
-  private getMsgFromWorker<V>(id: number) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return new Promise<MsgToMain<T, keyof T, V>>((resolve, reject) => {
-      const onmessage = (e: MessageEvent<MsgToMainWithId<T>>) => {
-        const { data } = e;
-        if (data.id === id) {
+  private getMsgFromWorker<D>(id: number) {
+    return new Promise<MsgToMain<A, D>>((resolve, reject) => {
+      const onmessage = (e: MessageEvent<MsgToMainWithId<A>>) => {
+        if (e.data.id === id) {
           this.worker.removeEventListener("message", onmessage);
-          const { msg } = data;
-          const value = data.value as V;
-          const result = { msg, value };
+          const { msg } = e.data;
+          const data = e.data.data as D;
+          const result = { msg, data };
           resolve(result);
         }
       };
 
-      const onmessageerror = (e: MessageEvent<MsgToMainWithId<T>>) => {
+      const onmessageerror = (e: MessageEvent<MsgToMainWithId<A>>) => {
         if (e.data.id === id) {
           this.worker.removeEventListener("messageerror", onmessageerror);
           reject(e);
@@ -64,12 +67,13 @@ export class WorkerHandler<T extends CommonActions> {
     });
   }
 
-  async execute<K extends keyof T>(
+  async execute<K extends keyof A>(
     actionName: K,
-    ...payload: Parameters<T[K]>
+    transfers: Transferable[] | null | undefined,
+    ...payload: Parameters<A[K]>
   ) {
-    const id = this.postMsgToWorker(actionName, ...payload);
-    return await this.getMsgFromWorker<GetValueType<T, K>>(id);
+    const id = this.postMsgToWorker(actionName, transfers || [], ...payload);
+    return await this.getMsgFromWorker<GetDataType<A, K>>(id);
   }
 
   terminate() {
@@ -77,5 +81,5 @@ export class WorkerHandler<T extends CommonActions> {
   }
 }
 
-type GetValueType<T extends CommonActions, M extends keyof T> =
-  ReturnType<T[M]> extends ActionResult<T, M, infer V> ? V : unknown;
+type GetDataType<A extends CommonActions, K extends keyof A> =
+  ReturnType<A[K]> extends ActionResult<infer D> ? D : unknown;

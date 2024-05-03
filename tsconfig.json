@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
+    "strictNullChecks": true,
     "lib": [
       "ESNext",
       "WebWorker",
@@ -10,7 +11,7 @@
     "moduleResolution": "Node",
     "noImplicitAny": true,
     "module": "ESNext",
-    "target": "es6",
+    "target": "ESNext",
     "allowJs": true,
     "baseUrl": "."
   },

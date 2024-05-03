@@ -1,26 +1,26 @@
-import {
-  ActionResult,
-  createActions,
-  createOnmessage,
-} from "worker-handler-test/worker";
-// import { ActionResult, createActions, createOnmessage } from "../worker";
+// import {
+//   ActionResult,
+//   createActions,
+//   createOnmessage,
+// } from "worker-handler-test/worker";
+import { ActionResult, createOnmessage } from "../worker";
 
 export type DemoActions = {
-  sendBackMsgLater: (
-    msg: string,
-    delay: number
-  ) => ActionResult<DemoActions, "sendBackMsgLater", string>;
+  pingMeLater: (delay: number) => ActionResult<string>;
+  workWithOffscreenCanvas: (canvas: OffscreenCanvas) => ActionResult<null>;
 };
 
-const demoActions = createActions<DemoActions>({
-  sendBackMsgLater: async (msg, delay) => {
+onmessage = createOnmessage<DemoActions>({
+  pingMeLater: async (delay) => {
     await new Promise((resolve) => {
       setTimeout(() => {
         resolve(null);
       }, delay);
     });
-    return [{ msg: "sendBackMsgLater", value: msg }];
+    return "Worker recieved a message from Main " + delay + "ms ago.";
+  },
+  workWithOffscreenCanvas: async (canvas) => {
+    console.log(canvas);
+    return;
   },
 });
-
-onmessage = createOnmessage(demoActions);

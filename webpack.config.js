@@ -50,7 +50,9 @@ module.exports = () => {
     config.optimization = {
       usedExports: false,
     };
-    config.module.rules[0].options = { configFile: path.resolve(__dirname,'tsconfig.prod.json') };
+    config.module.rules[0].options = {
+      configFile: path.resolve(__dirname, "tsconfig.prod.json"),
+    };
     config.plugins.push(
       new CopyWebpackPlugin({
         patterns: [
@@ -71,6 +73,7 @@ module.exports = () => {
       open: true,
       host: "localhost",
     };
+    config.devtool = "cheap-module-source-map";
     config.plugins = [
       new HtmlWebpackPlugin({
         template: "index.html",
