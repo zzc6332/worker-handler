@@ -1,11 +1,23 @@
 {
   "name": "worker-handler",
-  "version": "0.0.1",
+  "version": "0.0.0",
   "description": "",
   "exports": {
-    ".": "./main.js",
-    "./main": "./main.js",
-    "./worker": "./worker.js"
+    ".": {
+      "import": "./main.js",
+      "require": "./main.js",
+      "types": "./main.d.ts"
+    },
+    "./main": {
+      "import": "./main.js",
+      "require": "./main.js",
+      "types": "./main.d.ts"
+    },
+    "./worker": {
+      "import": "./worker.js",
+      "require": "./worker.js",
+      "types": "./types/worker.d.ts"
+    }
   },
   "keywords": [],
   "author": "zzc6332",

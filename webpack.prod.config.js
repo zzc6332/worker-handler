@@ -9,17 +9,20 @@ const config = {
     main: "./src/main.ts",
     worker: "./src/worker.ts",
   },
-  cache: false,
   output: {
     path: path.resolve(__dirname, "dist/release"),
     clean: true,
+    library: {
+      name: "WorkerHandlerLib",
+      type: "umd",
+    },
   },
   module: {
     rules: [
       {
         test: /\.(ts|tsx)$/i,
         loader: "ts-loader",
-        exclude: ["/node_modules/"],
+        exclude: ["/node_modules/", path.resolve(__dirname, "dist")],
         // options: { transpileOnly: true },
       },
       {

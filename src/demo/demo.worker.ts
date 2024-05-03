@@ -1,4 +1,9 @@
-import { ActionResult, createActions, createOnmessage } from "../worker";
+import {
+  ActionResult,
+  createActions,
+  createOnmessage,
+} from "worker-handler-test/worker";
+// import { ActionResult, createActions, createOnmessage } from "../worker";
 
 export type DemoActions = {
   sendBackMsgLater: (

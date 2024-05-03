@@ -1,12 +1,13 @@
-import { WorkerHandler } from "../main";
+import { WorkerHandler } from "worker-handler-test/main";
+// import { WorkerHandler } from "../main";
 import { DemoActions } from "./demo.worker";
 
-// import workerSrc from "./demo.worker.ts?worker&url"; // vite
-// import workerSrc from "./demo.worker.ts?worker"; // vite
+// import workerUrl from "./demo.worker.ts?worker&url"; // in vite
+// import workerInstance from "./demo.worker.ts?worker"; // in vite
 
 const demoWorker = new WorkerHandler<DemoActions>(
-  new Worker(new URL("./demo.worker.ts", import.meta.url)) // webpack5
-  // workerSrc
+  new Worker(new URL("./demo.worker.ts", import.meta.url)) // in webpack5
+  // pass workerUrl Or workerInstance here in Vite
 );
 
 demoWorker

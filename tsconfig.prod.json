@@ -12,7 +12,11 @@
     "module": "ESNext",
     "target": "es6",
     "allowJs": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+    "outDir": "./dist/release",
+    "declaration": true,
+    "declarationDir": "./dist/release"
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/demo"]
 }
