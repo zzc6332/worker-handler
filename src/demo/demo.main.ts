@@ -10,12 +10,18 @@ const demoWorker = new WorkerHandler<DemoActions>(
   // pass workerUrl Or workerInstance here in Vite
 );
 
-demoWorker.execute("pingMeLater", null, 1000).then((res) => {
+const pingInterval = demoWorker.execute("pingInterval", [], 1000, false, 5000);
+pingInterval.onmessage = (e) => {
+  console.log(e.data);
+  console.log("readyState: ", pingInterval.readyState);
+};
+pingInterval.promise.then((res) => {
   console.log(res.data);
 });
-
-const of = new OffscreenCanvas(1, 1);
-
-demoWorker.execute("workWithOffscreenCanvas", [of], of);
+console.log("readyState: ", pingInterval.readyState);
+setTimeout(() => {
+  console.log("结束时的 customListenersCount: ", demoWorker.terminate(true));
+  console.log("readyState: ", pingInterval.readyState);
+}, 6000);
 
 export default demoWorker;

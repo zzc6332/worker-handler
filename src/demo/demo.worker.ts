@@ -6,12 +6,16 @@
 import { ActionResult, createOnmessage } from "../worker";
 
 export type DemoActions = {
-  pingMeLater: (delay: number) => ActionResult<string>;
-  workWithOffscreenCanvas: (canvas: OffscreenCanvas) => ActionResult<null>;
+  pingLater: (delay: number) => ActionResult<string>;
+  pingInterval: (
+    interval: number,
+    isImmediate: boolean,
+    duration: number
+  ) => ActionResult<string | void>;
 };
 
 onmessage = createOnmessage<DemoActions>({
-  pingMeLater: async (delay) => {
+  async pingLater(delay) {
     await new Promise((resolve) => {
       setTimeout(() => {
         resolve(null);
@@ -19,8 +23,17 @@ onmessage = createOnmessage<DemoActions>({
     });
     return "Worker recieved a message from Main " + delay + "ms ago.";
   },
-  workWithOffscreenCanvas: async (canvas) => {
-    console.log(canvas);
-    return;
+
+  async pingInterval(interval, isImmediate, duration) {
+    let counter = 0;
+    const genMsg = () => "ping " + ++counter;
+    if (isImmediate) this.post(genMsg());
+    const intervalId = setInterval(() => {
+      this.post(genMsg());
+    }, interval);
+    setTimeout(() => {
+      clearInterval(intervalId);
+      this.end("no longer ping");
+    }, duration);
   },
 });
