@@ -2,7 +2,7 @@ import {
   CommonActions,
   MsgFromWorker,
   ActionResult,
-  StructuredCloneable,
+  MessageData,
   KeyMsgFromWorker,
 } from "./worker";
 
@@ -256,7 +256,7 @@ export class WorkerHandler<A extends CommonActions> {
 
   execute<K extends keyof A>(
     actionName: K,
-    options: ExecuteOptions | Transferable[] | number | null | undefined,
+    options?: ExecuteOptions | Transferable[] | number | null | undefined,
     ...payload: Parameters<A[K]>
   ) {
     const [id, timeout] = this.postMsgToWorker(
@@ -328,7 +328,7 @@ export class WorkerHandler<A extends CommonActions> {
 export type GetDataType<A extends CommonActions, K extends keyof A> =
   ReturnType<A[K]> extends ActionResult<infer D>
     ? Exclude<D, void>
-    : StructuredCloneable;
+    : MessageData;
 
 type ExecuteOptions = {
   transfer?: Transferable[];

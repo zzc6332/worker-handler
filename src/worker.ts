@@ -26,12 +26,12 @@ type StructuredCloneableError =
   | TypeError
   | URIError;
 
-export type StructuredCloneable =
+export type StructuredCloneable<T = never> =
   | Exclude<Primitive, symbol>
-  | { [k: string | number]: StructuredCloneable }
-  | Array<StructuredCloneable>
-  | Map<StructuredCloneable, StructuredCloneable>
-  | Set<StructuredCloneable>
+  | { [k: string | number]: StructuredCloneable<T> }
+  | Array<StructuredCloneable<T>>
+  | Map<StructuredCloneable<T>, StructuredCloneable<T>>
+  | Set<StructuredCloneable<T>>
   | ArrayBuffer
   | Boolean
   | String
@@ -39,14 +39,17 @@ export type StructuredCloneable =
   | Date
   | RegExp
   | TypedArray
-  | StructuredCloneableError;
+  | StructuredCloneableError
+  | T;
+
+export type MessageData = StructuredCloneable<Transferable> | Transferable;
 
 //#endregion
 
 //#region  - actions 中的各种类型
 
 export type ActionResult<
-  D extends StructuredCloneable | void = StructuredCloneable,
+  D extends MessageData | void = MessageData,
   T extends Transferable[] = Transferable[],
 > = Promise<D extends void ? void : never | Exclude<D, Array<any>> | [D, T]>;
 
@@ -54,7 +57,7 @@ export type CommonActions = {
   [K: string]: (this: ActionThis, ...args: any[]) => ActionResult;
 };
 
-export type MsgFromWorker<D = StructuredCloneable> = {
+export type MsgFromWorker<D = MessageData> = {
   data?: D;
   id: number;
   done: boolean;
@@ -85,12 +88,12 @@ type MsgDataFromMain = {
   id: number;
 };
 
-type PostMsgWithId<D extends StructuredCloneable = StructuredCloneable> = (
+type PostMsgWithId<D extends MessageData = MessageData> = (
   data: D,
   transfer?: Transferable[]
 ) => void;
 
-type ActionThis<D extends StructuredCloneable = StructuredCloneable> = {
+type ActionThis<D extends MessageData = MessageData> = {
   post: PostMsgWithId<D>;
   end: PostMsgWithId<D>;
 };
@@ -146,7 +149,7 @@ export function createOnmessage<A extends CommonActions>(
     const postResultWithId: PostMsgWithId = (data, transfer = []) => {
       Promise.resolve([data, transfer]).then((res) => {
         const toMain: Awaited<ReturnType<A[string]>> = res as any;
-        let data: StructuredCloneable = null;
+        let data: MessageData = null;
         let transfer: Transferable[] = [];
         if (Array.isArray(toMain)) {
           data = toMain[0];
@@ -171,25 +174,39 @@ export function createOnmessage<A extends CommonActions>(
 
     const action = actions[actionName];
 
-    let promise: ReturnType<typeof action> = action.apply(actionThis, payload);
+    try {
+      let promise: ReturnType<typeof action> = action.apply(
+        actionThis,
+        payload
+      );
 
-    const toMain = await promise;
-    if (toMain !== undefined) {
-      let data: StructuredCloneable = null;
-      let transfer: Transferable[] = [];
-      if (Array.isArray(toMain)) {
-        data = toMain[0];
-        transfer = toMain[1];
-      } else if (toMain) {
-        data = toMain;
+      const toMain = await promise;
+      if (toMain !== undefined) {
+        let data: MessageData = null;
+        let transfer: Transferable[] = [];
+        if (Array.isArray(toMain)) {
+          data = toMain[0];
+          transfer = toMain[1];
+        } else if (toMain) {
+          data = toMain;
+        }
+        const done = true;
+        const resultFromWorker: MsgFromWorker = {
+          data,
+          id,
+          done,
+        };
+        _postMessage(resultFromWorker, id, done, transfer);
       }
-      const done = true;
-      const resultFromWorker: MsgFromWorker = {
-        data,
-        id,
-        done,
-      };
-      _postMessage(resultFromWorker, id, done, transfer);
+    } catch (error) {
+      if (
+        error.message ===
+        "Cannot read properties of undefined (reading 'apply')"
+      ) {
+        console.warn(`'${actionName}' is not a action name.`);
+      } else {
+        throw error;
+      }
     }
   };
 }
