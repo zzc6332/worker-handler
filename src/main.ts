@@ -16,7 +16,12 @@ export class WorkerHandler<A extends CommonActions> {
 
   private id = 0;
 
-  private customListenersCount = 0;
+  private listenerMapsSet: Set<ListenerMap> = new Set();
+
+  private messageChannelsSet: Set<{
+    messageChannel: MessageChannel;
+    readyState: ReadyState;
+  }> = new Set();
 
   constructor(workerSrc: string | URL | Worker, options?: WorkerOptions) {
     const _options: WorkerOptions = {
@@ -28,20 +33,20 @@ export class WorkerHandler<A extends CommonActions> {
     } else {
       this.worker = new Worker(workerSrc, _options);
     }
-    this.worker.addEventListener(
-      "message",
-      (e: MessageEvent<KeyMsgFromWorker>) => {
+    const initialListenerMap = {
+      message: (e: MessageEvent<KeyMsgFromWorker>) => {
         if (!e.data.keyMessage) return;
         if (e.data.type === "message_error") {
           this.worker.dispatchEvent(
             new MessageEvent(
-              "message_error",
+              "messageerror",
               e as unknown as MessageEventInit<KeyMsgFromWorker>
             )
           );
         }
-      }
-    );
+      },
+    };
+    this.handleListeners(initialListenerMap);
   }
 
   get instance() {
@@ -50,7 +55,21 @@ export class WorkerHandler<A extends CommonActions> {
 
   terminate(getListenerCount?: boolean) {
     this.worker.terminate();
-    if (getListenerCount) return this.customListenersCount;
+    this.listenerMapsSet.forEach((listenerMap) => {
+      this.handleListeners(listenerMap, false);
+    });
+    this.listenerMapsSet.clear();
+    this.messageChannelsSet.forEach((messageChannel) => {
+      const {
+        readyState,
+        messageChannel: { port1, port2 },
+      } = messageChannel;
+      readyState.current = 2;
+      port1.close();
+      port2.close();
+    });
+    this.messageChannelsSet.clear();
+    if (getListenerCount) return this.listenerMapsSet.size;
   }
 
   private postMsgToWorker<K extends keyof A>(
@@ -70,7 +89,11 @@ export class WorkerHandler<A extends CommonActions> {
     }
 
     const message = { actionName, payload, id: this.id++ };
-    this.worker.postMessage(message, transfer);
+    try {
+      this.worker.postMessage(message, transfer);
+    } catch (error) {
+      console.error(error);
+    }
     return [message.id, timeout] as [number, number];
   }
 
@@ -79,10 +102,10 @@ export class WorkerHandler<A extends CommonActions> {
       const type = key as keyof WorkerEventMap;
       if (isAdd) {
         this.worker.addEventListener(type, listenerMap[type]!);
-        this.customListenersCount++;
+        this.listenerMapsSet.add(listenerMap);
       } else {
         this.worker.removeEventListener(type, listenerMap[type]!);
-        this.customListenersCount--;
+        this.listenerMapsSet.delete(listenerMap);
       }
     }
   }
@@ -126,7 +149,7 @@ export class WorkerHandler<A extends CommonActions> {
       this.handleListeners(resultListenerMap);
     });
 
-    const clearSideEffects = () => {
+    const clearEffects = () => {
       this.handleListeners(resultListenerMap, false);
       this.handleListeners(msgListenerMap, false);
       messageChannel.port1.close();
@@ -137,7 +160,7 @@ export class WorkerHandler<A extends CommonActions> {
     promise
       .catch(() => {})
       .finally(() => {
-        clearSideEffects();
+        clearEffects();
       });
 
     return promise;
@@ -149,6 +172,9 @@ export class WorkerHandler<A extends CommonActions> {
     readyState: ReadyState
   ) {
     const messageChannel = new MessageChannel();
+
+    this.messageChannelsSet.add({ messageChannel, readyState });
+
     const { port1: sendPort, port2: receivePort } = messageChannel;
 
     sendPort.start();
@@ -173,7 +199,7 @@ export class WorkerHandler<A extends CommonActions> {
     const messageerror = (e: MessageEvent<KeyMsgFromWorker>) => {
       if (e.data.id === id && !e.data.done) {
         receivePort.dispatchEvent(
-          new MessageEvent("messageorror", {
+          new MessageEvent("messageerror", {
             data: { actionName, error: e.data.error },
           })
         );
@@ -263,6 +289,10 @@ export class WorkerHandler<A extends CommonActions> {
       promise,
     };
 
+    let messageerrorCallback:
+      | ((this: MessagePort, ev: MessageEvent) => any)
+      | null;
+
     Object.defineProperties(messageSource, {
       readyState: {
         get: () => readyState.current,
@@ -272,11 +302,22 @@ export class WorkerHandler<A extends CommonActions> {
         set: (value: ((this: MessagePort, ev: MessageEvent) => any) | null) => {
           receivePort.onmessage = value;
         },
+        get: () => receivePort.onmessage,
       },
       onmessageerror: {
         set: (value: ((this: MessagePort, ev: MessageEvent) => any) | null) => {
-          receivePort.onmessage = value;
+          if (messageerrorCallback) {
+            receivePort.removeEventListener(
+              "messageerror",
+              messageerrorCallback
+            );
+          }
+          messageerrorCallback = value;
+          if (value) {
+            receivePort.addEventListener("messageerror", value);
+          }
         },
+        get: () => messageerrorCallback,
       },
     });
 
@@ -311,7 +352,7 @@ interface MessageSource<D> extends MessagePort {
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D>;
   addEventListener(
-    type: "message_error",
+    type: "messageerror",
     listener: (this: MessagePort, ev: MessageEvent<any>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D>;

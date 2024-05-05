@@ -115,6 +115,7 @@ function _postMessage(
       type: "message_error",
       error,
     };
+    console.error(error);
     postMessage(keyMsgFromWorker);
   }
 }
