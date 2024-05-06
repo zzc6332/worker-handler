@@ -203,7 +203,7 @@ export function createOnmessage<A extends CommonActions>(
         error.message ===
         "Cannot read properties of undefined (reading 'apply')"
       ) {
-        console.warn(`'${actionName}' is not a action name.`);
+        if (actionName) console.warn(`'${actionName}' is not a action name.`);
       } else {
         throw error;
       }
