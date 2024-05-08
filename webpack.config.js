@@ -5,6 +5,7 @@ const HtmlWebpackPlugin = require("html-webpack-plugin");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 
 const isProduction = process.env.NODE_ENV == "production";
+const useJs = process.env.NODE_ENV === "useJs";
 
 const config = {
   // Add your plugins here
@@ -52,6 +53,7 @@ module.exports = () => {
     };
     config.module.rules[0].options = {
       configFile: path.resolve(__dirname, "tsconfig.prod.json"),
+      ignoreDiagnostics: [2589],
     };
     config.plugins.push(
       new CopyWebpackPlugin({
@@ -65,7 +67,9 @@ module.exports = () => {
     );
   } else {
     config.mode = "development";
-    config.entry = "./src/demo/demo.main.ts";
+    config.entry = useJs
+      ? "./src/demo/demo.main.js"
+      : "./src/demo/demo.main.ts";
     config.output = {
       path: path.resolve(__dirname, "dist/demo"),
     };

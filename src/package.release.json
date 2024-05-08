@@ -1,7 +1,11 @@
 {
   "name": "worker-handler",
-  "version": "0.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Worker-handler provides a convenient capability for posting messages between the Main thread and the Worker thread when using Web Worker in javascript or typescript.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zzc6332/worker-handler"
+  },
   "exports": {
     ".": {
       "import": "./main.js",
@@ -16,10 +20,17 @@
     "./worker": {
       "import": "./worker.js",
       "require": "./worker.js",
-      "types": "./types/worker.d.ts"
+      "types": "./worker.d.ts"
     }
   },
-  "keywords": [],
+  "keywords": [
+    "worker",
+    "Web Worker",
+    "threads",
+    "javascript",
+    "typescript",
+    "front-end"
+  ],
   "author": "zzc6332",
   "license": "ISC"
 }
