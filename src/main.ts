@@ -258,7 +258,6 @@ export class WorkerHandler<A extends CommonActions> {
   execute<K extends keyof A, D extends Parameters<A[K]> = Parameters<A[K]>>(
     actionName: K,
     options?: ExecuteOptions<D> | Transfer<D, number | null | undefined>,
-    // options?: ExecuteOptions | Transferable[] | number | null | undefined,
     ...payload: D
   ) {
     const [id, timeout] = this.postMsgToWorker(
@@ -334,7 +333,6 @@ export type GetDataType<A extends CommonActions, K extends keyof A> =
 
 type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
   transfer: Transfer<D>;
-  // transfer?: Transferable[];
   timeout?: number;
 };
 

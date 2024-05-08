@@ -57,7 +57,7 @@ type GetTransferableInObject<
   D extends ObjectInMessageData,
   L extends number | null,
   P extends number | null = Prev<L>,
-> = L extends number
+> = [L] extends [number]
   ? {
       [K in keyof D as GetTransferables<D[K], P> extends Transferable
         ? K
@@ -71,7 +71,7 @@ type GetTransferableInObject<
 export type GetTransferables<
   D extends MessageData,
   L extends number | null,
-> = L extends number
+> = [L] extends [number]
   ? D extends Transferable
     ? D // 当 D 直接是 Transferable 的情况，递归的终点
     : D extends ObjectInMessageData
@@ -91,7 +91,6 @@ export type Transfer<
   E = never,
   T extends Transferable | null = GetTransferables<D, 10>,
 > = T extends Transferable ? [T, ...Transferable[]] : Transferable[] | E;
-// > = T extends Transferable ? [T, ...Transferable[]] : Transferable[] | E;
 
 type Prev<N extends number | null> = N extends 1
   ? null // 当计数器为 1 时，下一步将是 never，从而停止递归
@@ -120,9 +119,7 @@ type Prev<N extends number | null> = N extends 1
 
 export type ActionResult<
   D extends MessageData | void = MessageData,
-  M extends Exclude<D, void> = Exclude<D, void>,
-  T extends Transferable[] = Transfer<M>,
-  // T extends Transferable[] = Transferable[],
+  T extends Transferable[] = Transfer<Exclude<D, void>>,
 > = Promise<D extends void ? void : never | Exclude<D, Array<any>> | [D, T]>;
 
 export type CommonActions = {
