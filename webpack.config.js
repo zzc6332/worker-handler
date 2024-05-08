@@ -62,6 +62,7 @@ module.exports = () => {
             from: "src/package.release.json",
             to: "package.json",
           },
+          { from: "README.md", to: "README.md" },
         ],
       })
     );
