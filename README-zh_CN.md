@@ -168,6 +168,10 @@ onmessage = createOnmessage<DemoActions>({
 import { WorkerHandler } from "worker-handler/main";
 import { DemoActions } from "./demo.worker";
 
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
 demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
   console.log(res.data); // offscreen 被转移到了 Main 中
 });
@@ -239,7 +243,7 @@ onmessage = createOnmessage<DemoActions>({
 
 ~~~typescript
 // demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
   // EventTarget 形式传递的消息类型也通过 Action 的返回值类型定义，ActionResult<string | void> 表示传递的消息类型是 string，并且该异步函数可能不会显式地返回一个值
@@ -271,6 +275,10 @@ onmessage = createOnmessage<DemoActions>({
 // demo.main.ts
 import { WorkerHandler } from "worker-handler/main";
 import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
 
 demoWorker
   .execute("pingInterval", [], 1000, false, 5000) // execute() 执行后会返回一个 MessageSource

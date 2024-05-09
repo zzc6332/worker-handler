@@ -7,6 +7,7 @@
 ## OvewrView
 
 `Worker-handler` provides a convenient capability for posting messages between the `Main` thread and the `Worker` thread when using `Web Worker` in javascript or typescript.
+
 Through `worker-handler`, in `Main`, messages can be posted to and recieved from `Worker` just like network requests. `Actions` for handling these "requests" can be defined within `Worker`. There are two ways to obtain "responses": they can be acquired through `Promise`, which is similar to [AJAX](https://developer.mozilla.org/en-US/docs/Glossary/AJAX), or through `EventTarget`, which is similar to [Server-sent events](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events), and both ways of response can be used simultaneously in the same request.
 
 ## Quick Start
@@ -101,6 +102,10 @@ const demoWorker = new WorkerHandler<DemoActions>(
   new Worker(new URL("./demo.worker.ts", import.meta.url))
 );
 
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
 demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
   console.log(res.data);
 });
@@ -167,11 +172,16 @@ onmessage = createOnmessage<DemoActions>({
 import { WorkerHandler } from "worker-handler/main";
 import { DemoActions } from "./demo.worker";
 
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
 demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
   console.log(res.data); // The `offscreen` has been transferred to `Main`.
 });
-❗**Note**: For compatibility with the situations when passing `transfer`, if the message data to be passed is an array, it must be passed in the form of `[messageData, [...transferable]]`, even if there is no `transfer` needs to be passed, for example:
 ~~~
+
+❗**Note**: For compatibility with the situations when passing `transfer`, if the message data to be passed is an array, it must be passed in the form of `[messageData, [...transferable]]`, even if there is no `transfer` needs to be passed, for example:
 
 ~~~typescript
 // demo.worker.ts
@@ -237,7 +247,7 @@ Once `this.post()` is called correctly in the `Action`, it will immediately trig
 
 ~~~typescript
 // demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
   // The type of the message which is passed through the `EventTarget` is also defined by the return type of the `Action`, `ActionResult<string | void>` means that the message type should be a string, and this asynchronous function may not return a value explicitly.
@@ -269,6 +279,10 @@ onmessage = createOnmessage<DemoActions>({
 // demo.main.ts
 import { WorkerHandler } from "worker-handler/main";
 import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
 
 demoWorker
   .execute("pingInterval", [], 1000, false, 5000) // A `MessageSource` will be obtained as the return value of `execute()`.
