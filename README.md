@@ -360,10 +360,6 @@ Properties:
 
 - `onmessage`:
 
-  当 `Action` 发出的非终止响应消息时会被调用的回调函数。
-
-  接收一个参数 `e`，通过 `e.data` 可以接收到 `Action` 发出的非终止响应消息。
-
   A callback function that is called when `Action` makes a non-terminating response message. 
 
   It receives a parameter `e`, through which the non-terminating response message made by `Action` can be accessed via `e.data`.
