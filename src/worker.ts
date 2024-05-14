@@ -71,11 +71,12 @@ type GetTransferableInObject<
 export type GetTransferables<
   D extends MessageData,
   L extends number | null,
+  P extends number | null = Prev<L>,
 > = [L] extends [number]
   ? D extends Transferable
     ? D // 当 D 直接是 Transferable 的情况，递归的终点
     : D extends ObjectInMessageData
-      ? GetTransferableInObject<D, Prev<L>> // 当 D 是 ObjectInMessageData 的情况
+      ? GetTransferableInObject<D, P> // 当 D 是 ObjectInMessageData 的情况
       : D extends
             | Array<infer T extends MessageData>
             | Map<infer T, any>
