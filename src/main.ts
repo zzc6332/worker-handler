@@ -280,7 +280,7 @@ export class WorkerHandler<A extends CommonActions> {
       readyState
     );
 
-    const messageSource: MessageSource<MsgToMain<A, GetDataType<A, K>>> = {
+    const messageSource: MessageSource<GetDataType<A, K>, A> = {
       ...messagePort,
       readyState: 0,
       addEventListener: (type, listener) => {
@@ -343,20 +343,20 @@ type ListenerMap = {
   ) => any;
 };
 
-interface MessageSource<D> extends MessagePort {
-  promise: Promise<D>;
+interface MessageSource<D, A extends CommonActions> extends MessagePort {
+  promise: Promise<MsgToMain<A, D>>;
   readyState: ReadyState["current"];
   onmessage: ((this: MessagePort, ev: MessageEvent<D>) => any) | null;
   addEventListener(
     type: "message",
     listener: (this: MessagePort, ev: MessageEvent<D>) => any,
     options?: boolean | AddEventListenerOptions
-  ): MessageSource<D>;
+  ): MessageSource<D, A>;
   addEventListener(
     type: "messageerror",
     listener: (this: MessagePort, ev: MessageEvent<any>) => any,
     options?: boolean | AddEventListenerOptions
-  ): MessageSource<D>;
+  ): MessageSource<D, A>;
 }
 
 type ReadyState = { current: 0 | 1 | 2 };
