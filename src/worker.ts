@@ -143,7 +143,7 @@ export interface KeyMsgFromWorker extends Pick<MsgFromWorker, "id"> {
 
 export type ActionWithThis<A extends CommonActions> = {
   [K in keyof A]: (
-    this: ActionThis<GetDataType<A, K>>,
+    this: ActionThis<A, GetDataType<A, K>>,
     ...args: Parameters<A[K]>
   ) => ReturnType<A[K]>;
 };
@@ -163,10 +163,13 @@ type PostMsgWithId<D extends MessageData = MessageData> = (
   transfer?: Transferable[]
 ) => void;
 
-type ActionThis<D extends MessageData = MessageData> = {
+type ActionThis<
+  A extends CommonActions = CommonActions,
+  D extends MessageData = MessageData,
+> = {
   post: PostMsgWithId<D>;
   end: PostMsgWithId<D>;
-};
+} & ActionWithThis<A>;
 
 function _postMessage(
   message: MsgFromWorker,
@@ -237,9 +240,10 @@ export function createOnmessage<A extends CommonActions>(
       });
     };
 
-    const actionThis: ActionThis = {
+    const actionThis: ActionThis<A> = {
       post: postMsgWithId,
       end: postResultWithId,
+      ...actions,
     };
 
     const action = actions[actionName];
