@@ -13,7 +13,13 @@
     "module": "ESNext",
     "target": "ESNext",
     "allowJs": true,
-    "baseUrl": "."
+    "baseUrl": ".",
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src"]
 }

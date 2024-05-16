@@ -121,7 +121,7 @@ type Prev<N extends number | null> = N extends 1
 export type ActionResult<
   D extends MessageData | void = MessageData,
   T extends Transferable[] = Transfer<Exclude<D, void>>,
-> = Promise<D extends void ? void : never | Exclude<D, Array<any>> | [D, T]>;
+> = Promise<D extends void ? void : D extends Array<any> ? [D, T] : D>;
 
 export type CommonActions = {
   [K: string]: (this: ActionThis, ...args: any[]) => ActionResult;
@@ -169,7 +169,12 @@ type ActionThis<
 > = {
   $post: PostMsgWithId<D>;
   $end: PostMsgWithId<D>;
-} & ActionWithThis<A>;
+} & {
+  [K in keyof A]: (
+    this: ActionThis<A, any>,
+    ...args: Parameters<A[K]>
+  ) => ReturnType<A[K]>;
+};
 
 function _postMessage(
   message: MsgFromWorker,
@@ -246,9 +251,20 @@ export function createOnmessage<A extends CommonActions>(
       ...actions,
     };
 
+    for (const k in actions) {
+      const actionBinded = actions[k].bind(actionThis);
+      actions[k] = actionBinded;
+      actionThis[k] = actions[k].bind(actionThis) as any;
+    }
+
     const action = actions[actionName];
 
     try {
+      // let promise: ReturnType<typeof action> = action.apply(
+      //   actionThis,
+      //   payload
+      // );
+
       let promise: ReturnType<typeof action> = action.apply(
         actionThis,
         payload
@@ -272,7 +288,7 @@ export function createOnmessage<A extends CommonActions>(
         };
         _postMessage(resultFromWorker, id, done, transfer);
       }
-    } catch (error) {
+    } catch (error: any) {
       if (
         error.message ===
         "Cannot read properties of undefined (reading 'apply')"

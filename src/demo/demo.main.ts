@@ -1,4 +1,4 @@
-// import { WorkerHandler } from "worker-handler-test/main";
+// import { WorkerHandler } from "worker-handler/main";
 import { WorkerHandler } from "../main";
 import { DemoActions } from "./demo.worker";
 
@@ -11,6 +11,9 @@ const demoWorker = new WorkerHandler<DemoActions>(
 );
 
 const pingInterval = demoWorker.execute("pingInterval", [], 1000, false, 5000);
+pingInterval.addEventListener("message", (e) => {
+  console.log(e.data);
+});
 pingInterval.onmessage = (e) => {
   console.log(e.data);
   console.log("readyState: ", pingInterval.readyState);
@@ -23,5 +26,7 @@ setTimeout(() => {
   console.log("结束时的 customListenersCount: ", demoWorker.terminate(true));
   console.log("readyState: ", pingInterval.readyState);
 }, 6000);
+
+demoWorker.execute("getDocument");
 
 export default demoWorker;

@@ -102,10 +102,10 @@ export class WorkerHandler<A extends CommonActions> {
     for (const key in listenerMap) {
       const type = key as keyof WorkerEventMap;
       if (isAdd) {
-        this.worker.addEventListener(type, listenerMap[type]!);
+        this.worker.addEventListener(type, listenerMap[type]! as any);
         this.listenerMapsSet.add(listenerMap);
       } else {
-        this.worker.removeEventListener(type, listenerMap[type]!);
+        this.worker.removeEventListener(type, listenerMap[type]! as any);
         this.listenerMapsSet.delete(listenerMap);
       }
     }
@@ -190,14 +190,14 @@ export class WorkerHandler<A extends CommonActions> {
       { once: true }
     );
 
-    const message = (e: MessageEvent<MsgFromWorker<D>>) => {
+    const message = (e: MessageEvent<MsgFromWorker<D>>): any => {
       if (e.data.id === id && !e.data.done && !e.data.keyMessage) {
         const data = e.data.data as D;
         sendPort.postMessage(data);
       }
     };
 
-    const messageerror = (e: MessageEvent<KeyMsgFromWorker>) => {
+    const messageerror = (e: MessageEvent<KeyMsgFromWorker>): any => {
       if (e.data.id === id && !e.data.done) {
         receivePort.dispatchEvent(
           new MessageEvent("messageerror", {
@@ -217,7 +217,7 @@ export class WorkerHandler<A extends CommonActions> {
         const k = key as keyof MessagePort;
         const v = receivePort[k];
         if (typeof v === "function") {
-          bindedMessagePort[k] = v.bind(messagePort);
+          bindedMessagePort[k] = v.bind(messagePort) as any;
         }
       }
       return bindedMessagePort;
@@ -284,7 +284,10 @@ export class WorkerHandler<A extends CommonActions> {
       ...messagePort,
       readyState: 0,
       addEventListener: (type, listener) => {
-        messagePort.addEventListener(type, listener);
+        messagePort.addEventListener(
+          type as keyof MessagePortEventMap,
+          listener as any
+        );
         return messageSource;
       },
       promise,
@@ -328,7 +331,9 @@ export class WorkerHandler<A extends CommonActions> {
 
 export type GetDataType<A extends CommonActions, K extends keyof A> =
   ReturnType<A[K]> extends ActionResult<infer D>
-    ? Exclude<D, void>
+    ? D extends void
+      ? undefined
+      : Exclude<D, void>
     : MessageData;
 
 type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
@@ -337,24 +342,29 @@ type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
 };
 
 type ListenerMap = {
-  [key in keyof WorkerEventMap]?: (
-    this: Worker,
-    ev: ErrorEvent | MessageEvent<any>
-  ) => any;
+  message?: (e: MessageEvent<any>) => any;
+  messageerror?: (e: MessageEvent<any>) => any;
+  error?: (e: ErrorEvent) => any;
 };
 
-interface MessageSource<D, A extends CommonActions> extends MessagePort {
+interface MessageSource<D, A extends CommonActions>
+  extends Omit<MessagePort, "addEventListener"> {
   promise: Promise<MsgToMain<A, D>>;
   readyState: ReadyState["current"];
   onmessage: ((this: MessagePort, ev: MessageEvent<D>) => any) | null;
-  addEventListener(
-    type: "message",
-    listener: (this: MessagePort, ev: MessageEvent<D>) => any,
-    options?: boolean | AddEventListenerOptions
-  ): MessageSource<D, A>;
-  addEventListener(
-    type: "messageerror",
-    listener: (this: MessagePort, ev: MessageEvent<any>) => any,
+  // addEventListener(
+  //   type: "message",
+  //   listener: (this: MessagePort, ev: MessageEvent<D>) => any,
+  //   options?: boolean | AddEventListenerOptions
+  // ): MessageSource<D, A>;
+  // addEventListener(
+  //   type: "messageerror",
+  //   listener: (this: MessagePort, ev: MessageEvent<any>) => any,
+  //   options?: boolean | AddEventListenerOptions
+  // ): MessageSource<D, A>;
+  addEventListener<K extends keyof WorkerEventMap>(
+    type: K,
+    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
 }
