@@ -138,11 +138,11 @@ Responding through `EventTarget` is suitable for situations where one request wi
 
 ### Responding through `Promise`
 
-In `Actions`, you can respond to messages through `Promise` either by using return value of the `Action` or by calling `this.end()`.
+In `Actions`, you can respond to messages through `Promise` either by using return value of the `Action` or by calling `this.$end()`.
 
 Using return value of the `Action` is suitable when the response should be made after the `Action` has been totally executed , and it can be used in arrow functions.
 
-Calling `this.end()` is suitable for situations where the `Action` needs to continue executing after making a response, or when a response needs to be made within a callback function within the `Action`. But it does not support use in arrow functions.
+Calling `this.$end()` is suitable for situations where the `Action` needs to continue executing after making a response, or when a response needs to be made within a callback function within the `Action`. But it does not support use in arrow functions.
 
 #### Using return value of the `Action`
 
@@ -203,19 +203,19 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-#### Calling `this.end()`
+#### Calling `this.$end()`
 
-Calling `this.end()` within `Action` can also pass the message to `Main` through `Promise`.
+Calling `this.$end()` within `Action` can also pass the message to `Main` through `Promise`.
 
-The first parameter that `end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
 
-❗**Attention**: The `Action` cannot be defined as an arrow function if `this.end()` needs to be called.
+❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$end()` needs to be called.
 
-Once `this.end()` is called correctly in the `Action`, it will immediately change the state of the corresponding `Promise` received in `Main` to `fulfilled`. After that, the `Action` will continue to execute, but the connection for the "request " will have been closed, and no further responses will be made (including responses through `EventTarget`). And the return value of the `Action` will be ignored.
+Once `this.$end()` is called correctly in the `Action`, it will immediately change the state of the corresponding `Promise` received in `Main` to `fulfilled`. After that, the `Action` will continue to execute, but the connection for the "request " will have been closed, and no further responses will be made (including responses through `EventTarget`). And the return value of the `Action` will be ignored.
 
 It is more suitable for situations where `Action` needs to continue executing after making a response, or where a response needs to be made when excuting a callback function in `Action`.
 
-For instance, in the <a href="#ts-example" target="_self">Typescript example above</a>, the `pingLater Action` is actually more suited to respond messages by calling `this.end()`:
+For instance, in the <a href="#ts-example" target="_self">Typescript example above</a>, the `pingLater Action` is actually more suited to respond messages by calling `this.$end()`:
 
 ~~~typescript
 // demo.worker.ts
@@ -229,7 +229,7 @@ export type DemoActions = {
 onmessage = createOnmessage<DemoActions>({
   async pingLater(delay) {
     setTimeout(() => {
-      this.end("Worker recieved a message from Main " + delay + "ms ago.");
+      this.$end("Worker recieved a message from Main " + delay + "ms ago.");
     }, delay);
   }
 });
@@ -237,13 +237,13 @@ onmessage = createOnmessage<DemoActions>({
 
 ### Responding through `EventTarget`
 
-Calling `this.post()` within `Action` can pass the message to `Main` through `EventTarget`.
+Calling `this.$post()` within `Action` can pass the message to `Main` through `EventTarget`.
 
-The first parameter that `end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
 
-❗**Attention**: The `Action` cannot be defined as an arrow function if `this.post()` needs to be called.
+❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$post()` needs to be called.
 
-Once `this.post()` is called correctly in the `Action`, it will immediately trigger the `message` event of the corresponding `MessageSource` (which extends methods similar to those in [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget)) recieved in `Main`. The message can be received by setting the `onmessage` callback or by using `addEventListener()` to listen for the `message` event of `MessageSource`. If you need to receive the message through `Promise` as well, using `addEventListener()` it is recommended. `MessageSource.addEventListener()` will return `MessageSource` itself, allowing for convenient chaining to obtain the `Promise`. Below is an example of responding with messages through both `EventTarget` and `Promise`:
+Once `this.$post()` is called correctly in the `Action`, it will immediately trigger the `message` event of the corresponding `MessageSource` (which extends methods similar to those in [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget)) recieved in `Main`. The message can be received by setting the `onmessage` callback or by using `addEventListener()` to listen for the `message` event of `MessageSource`. If you need to receive the message through `Promise` as well, using `addEventListener()` it is recommended. `MessageSource.addEventListener()` will return `MessageSource` itself, allowing for convenient chaining to obtain the `Promise`. Below is an example of responding with messages through both `EventTarget` and `Promise`:
 
 ~~~typescript
 // demo.worker.ts
@@ -263,13 +263,13 @@ onmessage = createOnmessage<DemoActions>({
   async pingInterval(interval, isImmediate, duration) {
     let counter = 0;
     const genMsg = () => "ping " + ++counter;
-    if (isImmediate) this.post(genMsg());
+    if (isImmediate) this.$post(genMsg());
     const intervalId = setInterval(() => {
-      this.post(genMsg());
+      this.$post(genMsg());
     }, interval);
     setTimeout(() => {
       clearInterval(intervalId);
-      this.end("no longer ping");
+      this.$end("no longer ping");
     }, duration);
   }
 });
@@ -392,7 +392,7 @@ Methods:
 
 Define `Actions` within an object, which is passed to the `createOnmessage()` when called, and return a listener function for the `message` event of `Worker`.
 
-Use `this.post()` within `Action` to make non-terminating responses, and use `this.end()` or return a value to make terminating responses.
+Use `this.$post()` within `Action` to make non-terminating responses, and use `this.$end()` or return a value to make terminating responses.
 
 #### ActionResult
 
@@ -400,7 +400,7 @@ Use `this.post()` within `Action` to make non-terminating responses, and use `th
 
 When defining the `Action` type, `ActionResult` is required to generate the type of return value.
 
-The generic parameter passed also affects the types of parameters received by `this.post()` and `this.end()` within the `Action`.
+The generic parameter passed also affects the types of parameters received by `this.$post()` and `this.$end()` within the `Action`.
 
 If the `Action` does not need to return a value explicitly, the generic parameter passed should include `void`, such as `ActionResult<string | void>`.
 

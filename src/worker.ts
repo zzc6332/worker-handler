@@ -167,8 +167,8 @@ type ActionThis<
   A extends CommonActions = CommonActions,
   D extends MessageData = MessageData,
 > = {
-  post: PostMsgWithId<D>;
-  end: PostMsgWithId<D>;
+  $post: PostMsgWithId<D>;
+  $end: PostMsgWithId<D>;
 } & ActionWithThis<A>;
 
 function _postMessage(
@@ -241,8 +241,8 @@ export function createOnmessage<A extends CommonActions>(
     };
 
     const actionThis: ActionThis<A> = {
-      post: postMsgWithId,
-      end: postResultWithId,
+      $post: postMsgWithId,
+      $end: postResultWithId,
       ...actions,
     };
 

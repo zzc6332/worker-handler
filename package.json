@@ -1,6 +1,6 @@
 {
   "name": "worker-handler",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "",
   "scripts": {
     "test": "jest",
@@ -19,6 +19,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "pdfjs-dist": "^4.2.67",
     "worker-handler": "^0.1.0"
   },
   "devDependencies": {

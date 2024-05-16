@@ -134,11 +134,11 @@ demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
 
 ### Promise 形式
 
-`Action` 中可以用函数返回值，或调用 `this.end()` 这两种方式以 `Promise` 形式响应消息。
+`Action` 中可以用函数返回值，或调用 `this.$end()` 这两种方式以 `Promise` 形式响应消息。
 
 函数返回值的方式适合当 `Action` 中所有逻辑执行完毕后再做出响应的情况，且可以在箭头函数中使用。
 
-`this.end()` 方式适合 `Action` 在发出响应后仍需要继续执行的情况，或需要在 `Action` 中的回调函数中发出响应的情况，不支持在箭头函数中使用。
+`this.$end()` 方式适合 `Action` 在发出响应后仍需要继续执行的情况，或需要在 `Action` 中的回调函数中发出响应的情况，不支持在箭头函数中使用。
 
 #### 使用函数返回值
 
@@ -199,15 +199,15 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-#### 使用 this.end()
+#### 使用 this.$end()
 
-在 `Action` 中调用 `this.end()` 也可以将消息以 `Promise` 的形式传递给 `Main`。
+在 `Action` 中调用 `this.$end()` 也可以将消息以 `Promise` 的形式传递给 `Main`。
 
-`this.end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
+`this.$end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
-一旦 `Action` 中的 `this.end()` 被正确地调用，则会立刻将 `Main` 中收到的对应 `Promise` 的状态转变为 `fulfilled`，之后 `Action` 中的代码仍会执行，但是该次请求的连接已关闭，不会再发出任何响应（包括 `EventTarget` 形式的响应），即使最后 `return` 了其它内容也会被无视。
+一旦 `Action` 中的 `this.$end()` 被正确地调用，则会立刻将 `Main` 中收到的对应 `Promise` 的状态转变为 `fulfilled`，之后 `Action` 中的代码仍会执行，但是该次请求的连接已关闭，不会再发出任何响应（包括 `EventTarget` 形式的响应），即使最后 `return` 了其它内容也会被无视。
 
 这种 `Promise` 响应方式更适合 `Action` 在发出响应后仍需要继续执行的情况，或需要在 `Action` 中的回调函数中发出响应的情况。
 
@@ -225,7 +225,7 @@ export type DemoActions = {
 onmessage = createOnmessage<DemoActions>({
   async pingLater(delay) {
     setTimeout(() => {
-      this.end("Worker recieved a message from Main " + delay + "ms ago.");
+      this.$end("Worker recieved a message from Main " + delay + "ms ago.");
     }, delay);
   }
 });
@@ -233,13 +233,13 @@ onmessage = createOnmessage<DemoActions>({
 
 ### EventTarget 形式
 
-在 `Action` 中调用 `this.post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
+在 `Action` 中调用 `this.$post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
 
-`post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
+`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
-一旦 `Action` 中的 `this.post()` 被正确地调用，则会立刻触发 `Main` 中收到的对应 `MessageSource`（它拓展了类似 [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget) 中的方法） 的 `message` 事件。通过设置 `onmessage` 回调或使用 `addEventListener()` 监听 `MessageSource` 的 `message` 事件可以接收到该消息。如果需要同时获取 `Promise` 形式的消息，则推荐使用 `addEventListener()` 的方式监听，`MessageSource.addEventListener()` 会将 `MessageSource` 自身返回，可以方便地链式调用再获取到 `Promise`。以下是一个同时使用 `EventTarget` 和 `Promise` 形式响应消息的示例：
+一旦 `Action` 中的 `this.$post()` 被正确地调用，则会立刻触发 `Main` 中收到的对应 `MessageSource`（它拓展了类似 [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget) 中的方法） 的 `message` 事件。通过设置 `onmessage` 回调或使用 `addEventListener()` 监听 `MessageSource` 的 `message` 事件可以接收到该消息。如果需要同时获取 `Promise` 形式的消息，则推荐使用 `addEventListener()` 的方式监听，`MessageSource.addEventListener()` 会将 `MessageSource` 自身返回，可以方便地链式调用再获取到 `Promise`。以下是一个同时使用 `EventTarget` 和 `Promise` 形式响应消息的示例：
 
 ~~~typescript
 // demo.worker.ts
@@ -259,13 +259,13 @@ onmessage = createOnmessage<DemoActions>({
   async pingInterval(interval, isImmediate, duration) {
     let counter = 0;
     const genMsg = () => "ping " + ++counter;
-    if (isImmediate) this.post(genMsg());
+    if (isImmediate) this.$post(genMsg());
     const intervalId = setInterval(() => {
-      this.post(genMsg());
+      this.$post(genMsg());
     }, interval);
     setTimeout(() => {
       clearInterval(intervalId);
-      this.end("no longer ping");
+      this.$end("no longer ping");
     }, duration);
   }
 });
@@ -387,7 +387,7 @@ demoWorker
 
 将 `Actions` 定义到一个对象中，传递给 `createOnmessage()` 调用后，返回一个对 `Worker` 的 `message` 事件的监听函数。
 
-`Action` 中使用 `this.post()` 发送非终止响应，使用 `this.end()` 或通过返回值发送终止响应。
+`Action` 中使用 `this.$post()` 发送非终止响应，使用 `this.$end()` 或通过返回值发送终止响应。
 
 #### ActionResult
 
@@ -395,6 +395,6 @@ demoWorker
 
 定义 `Action` 类型时，需要使用 `ActionResult` 来生成返回值类型。
 
-传入的泛型参数同时会影响到 `Action` 中 `this.post()` 和 `this.end()` 接收的参数类型。
+传入的泛型参数同时会影响到 `Action` 中 `this.$post()` 和 `this.$end()` 接收的参数类型。
 
 如果 `Action` 不需要显式返回一个值，则传入的泛型参数需要包含 `void`，如 `ActionResult<string | void>`。
