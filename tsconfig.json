@@ -14,6 +14,7 @@
     "target": "ESNext",
     "allowJs": true,
     "baseUrl": ".",
+    "sourceMap": true,
 
     /* Linting */
     "strict": true,
