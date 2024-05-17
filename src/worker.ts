@@ -245,26 +245,23 @@ export function createOnmessage<A extends CommonActions>(
       });
     };
 
+    const boundActions = { ...actions };
+
     const actionThis: ActionThis<A> = {
       $post: postMsgWithId,
       $end: postResultWithId,
-      ...actions,
+      ...boundActions,
     };
 
     for (const k in actions) {
-      const actionBinded = actions[k].bind(actionThis);
-      actions[k] = actionBinded;
-      actionThis[k] = actions[k].bind(actionThis) as any;
+      const boundAction = actions[k].bind(actionThis);
+      boundActions[k] = boundAction;
+      actionThis[k] = boundAction as any;
     }
 
     const action = actions[actionName];
 
     try {
-      // let promise: ReturnType<typeof action> = action.apply(
-      //   actionThis,
-      //   payload
-      // );
-
       let promise: ReturnType<typeof action> = action.apply(
         actionThis,
         payload
