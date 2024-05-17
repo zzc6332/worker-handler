@@ -121,7 +121,15 @@ type Prev<N extends number | null> = N extends 1
 export type ActionResult<
   D extends MessageData | void = MessageData,
   T extends Transferable[] = Transfer<Exclude<D, void>>,
-> = Promise<D extends void ? void : D extends Array<any> ? [D, T] : D>;
+> = Promise<
+  D extends void
+    ? void
+    : D extends Array<any>
+      ? [D, T]
+      : GetTransferables<Exclude<D, void>, 10> extends null
+        ? D | [D, T]
+        : [D, Transfer<Exclude<D, void>>]
+>;
 
 export type CommonActions = {
   [K: string]: (this: ActionThis, ...args: any[]) => ActionResult;
