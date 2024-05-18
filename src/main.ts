@@ -100,12 +100,29 @@ export class WorkerHandler<A extends CommonActions> {
 
   private handleListeners(listenerMap: ListenerMap, isAdd: boolean = true) {
     for (const key in listenerMap) {
-      const type = key as keyof WorkerEventMap;
       if (isAdd) {
-        this.worker.addEventListener(type, listenerMap[type]! as any);
+        if (key === "error" && listenerMap["error"]) {
+          this.worker.addEventListener("error", listenerMap["error"]);
+        } else if (key === "message" && listenerMap["message"]) {
+          this.worker.addEventListener("message", listenerMap["message"]);
+        } else if (key === "messageerror" && listenerMap["messageerror"]) {
+          this.worker.addEventListener(
+            "messageerror",
+            listenerMap["messageerror"]
+          );
+        }
         this.listenerMapsSet.add(listenerMap);
       } else {
-        this.worker.removeEventListener(type, listenerMap[type]! as any);
+        if (key === "error" && listenerMap["error"]) {
+          this.worker.removeEventListener("error", listenerMap["error"]);
+        } else if (key === "message" && listenerMap["message"]) {
+          this.worker.removeEventListener("message", listenerMap["message"]);
+        } else if (key === "messageerror" && listenerMap["messageerror"]) {
+          this.worker.removeEventListener(
+            "messageerror",
+            listenerMap["messageerror"]
+          );
+        }
         this.listenerMapsSet.delete(listenerMap);
       }
     }
@@ -190,14 +207,14 @@ export class WorkerHandler<A extends CommonActions> {
       { once: true }
     );
 
-    const message = (e: MessageEvent<MsgFromWorker<D>>): any => {
+    const message = (e: MessageEvent<MsgFromWorker<D>>) => {
       if (e.data.id === id && !e.data.done && !e.data.keyMessage) {
         const data = e.data.data as D;
         sendPort.postMessage(data);
       }
     };
 
-    const messageerror = (e: MessageEvent<KeyMsgFromWorker>): any => {
+    const messageerror = (e: MessageEvent<KeyMsgFromWorker>) => {
       if (e.data.id === id && !e.data.done) {
         receivePort.dispatchEvent(
           new MessageEvent("messageerror", {
@@ -212,18 +229,18 @@ export class WorkerHandler<A extends CommonActions> {
     this.handleListeners(listenerMap);
 
     const bindToSource = (messagePort: MessagePort): MessagePort => {
-      const bindedMessagePort = { ...messagePort };
+      const boundMessagePort = { ...messagePort } as MessagePort;
       for (const key in receivePort) {
         const k = key as keyof MessagePort;
-        const v = receivePort[k];
-        if (typeof v === "function") {
-          bindedMessagePort[k] = v.bind(messagePort) as any;
+        const method = receivePort[k];
+        if (typeof method === "function") {
+          boundMessagePort[k] = method.bind(messagePort) as any;
         }
       }
-      return bindedMessagePort;
+      return boundMessagePort;
     };
 
-    const bindedReceivePort = bindToSource(receivePort);
+    const boundReceivePort = bindToSource(receivePort);
 
     const {
       postMessage,
@@ -234,7 +251,7 @@ export class WorkerHandler<A extends CommonActions> {
       addEventListener,
       removeEventListener,
       dispatchEvent,
-    } = bindedReceivePort;
+    } = boundReceivePort;
 
     const messagePort: MessagePort = {
       postMessage,
@@ -284,10 +301,7 @@ export class WorkerHandler<A extends CommonActions> {
       ...messagePort,
       readyState: 0,
       addEventListener: (type, listener) => {
-        messagePort.addEventListener(
-          type as keyof MessagePortEventMap,
-          listener as any
-        );
+        messagePort.addEventListener(type, listener);
         return messageSource;
       },
       promise,
@@ -331,7 +345,7 @@ export class WorkerHandler<A extends CommonActions> {
 
 export type GetDataType<A extends CommonActions, K extends keyof A> =
   ReturnType<A[K]> extends ActionResult<infer D>
-    ? D extends void
+    ? Exclude<D, void> extends never
       ? undefined
       : Exclude<D, void>
     : MessageData;
@@ -352,19 +366,14 @@ interface MessageSource<D, A extends CommonActions>
   promise: Promise<MsgToMain<A, D>>;
   readyState: ReadyState["current"];
   onmessage: ((this: MessagePort, ev: MessageEvent<D>) => any) | null;
-  // addEventListener(
-  //   type: "message",
-  //   listener: (this: MessagePort, ev: MessageEvent<D>) => any,
-  //   options?: boolean | AddEventListenerOptions
-  // ): MessageSource<D, A>;
-  // addEventListener(
-  //   type: "messageerror",
-  //   listener: (this: MessagePort, ev: MessageEvent<any>) => any,
-  //   options?: boolean | AddEventListenerOptions
-  // ): MessageSource<D, A>;
-  addEventListener<K extends keyof WorkerEventMap>(
-    type: K,
-    listener: (this: Worker, ev: WorkerEventMap[K]) => any,
+  addEventListener(
+    type: "message",
+    listener: (this: MessagePort, ev: MessageEvent<D>) => any,
+    options?: boolean | AddEventListenerOptions
+  ): MessageSource<D, A>;
+  addEventListener(
+    type: "messageerror",
+    listener: (this: MessagePort, ev: MessageEvent<any>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
 }
