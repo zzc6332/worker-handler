@@ -203,7 +203,7 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-#### Calling `this.$end()`
+#### <span id="this_end">Calling `this.$end()`</span>
 
 Calling `this.$end()` within `Action` can also pass the message to `Main` through `Promise`.
 
@@ -235,7 +235,44 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-### Responding through `EventTarget`
+#### Responding without data
+
+ For compatibility with the way to respond by <a href="#this_end" target="_self">this.\$end()</a> or <a href="#this_post" target="_self">this.\$post()</a>, when no explicit value is returned in `Action`, or the data in the returned `Promise` is `undefined`, the state of the corresponding `Promise` received in `Main` remains unaffected by the `Promise` returned by `Action`. This allows `this.$end()` and `this.$post()` to control the response when there is no need to use the return value of `Action` for responding.
+
+If an `Action` does not need to respond with any data through `Promise`, but needs to inform `Main` that the `Action` has been completed, then the following two ways can be referenced:
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+
+export type DemoActions = {
+  returnNull: () => ActionResult<null>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnNull() {
+    // ...
+    return null
+  }
+});
+~~~
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+
+export type DemoActions = {
+  returnVoid: () => ActionResult<void>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnVoid() {
+    // ...
+    this.$end();
+  }
+});
+~~~
+
+### <span id="this_post">Responding through `EventTarget`</span>
 
 Calling `this.$post()` within `Action` can pass the message to `Main` through `EventTarget`.
 

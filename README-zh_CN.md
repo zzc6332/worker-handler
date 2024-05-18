@@ -199,7 +199,7 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-#### 使用 this.$end()
+#### <span id="this_end">使用 this.$end()</span>
 
 在 `Action` 中调用 `this.$end()` 也可以将消息以 `Promise` 的形式传递给 `Main`。
 
@@ -231,7 +231,45 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-### EventTarget 形式
+#### 响应空数据
+
+为了兼容通过调用 <a href="#this_end" target="_self">this.\$end()</a> 或 <a href="#this_post" target="_self">this.\$post()</a> 进行响应的方式，当在 `Action` 中没有显式地返回一个值，或返回的 `Promise` 中的数据为 `undefined` 时，`Main` 中接收到的对应的 `Promise` 的状态不会受到 `Action` 返回的 `Promise` 的影响。这是为了在不需要使用函数返回值进行响应时，将响应的权限交给 `this.$end()` 和 `this.$post()`。
+
+如果一个 `Action` 不需要以 `Promise` 形式响应任何数据，但是需要让 `Main` 知道该 `Action` 已经执行完毕，那么可以使用以下两种做法：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+
+export type DemoActions = {
+  returnNull: () => ActionResult<null>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnNull() {
+    // ...
+    return null
+  }
+});
+~~~
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler-test/worker";
+
+export type DemoActions = {
+  returnVoid: () => ActionResult<void>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnVoid() {
+    // ...
+    this.$end();
+  }
+});
+~~~
+
+### <span id="this_post">EventTarget 形式</span>
 
 在 `Action` 中调用 `this.$post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
 
