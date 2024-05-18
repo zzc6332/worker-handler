@@ -78,7 +78,7 @@ module.exports = () => {
       open: true,
       host: "localhost",
     };
-    config.devtool = "cheap-module-source-map";
+    config.devtool = "source-map";
     config.plugins = [
       new HtmlWebpackPlugin({
         template: "index.html",
