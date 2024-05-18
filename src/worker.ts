@@ -278,12 +278,10 @@ export function createOnmessage<A extends CommonActions>(
     const action = actions[actionName];
 
     try {
-      let promise: ReturnType<typeof action> = action.apply(
+      const toMain = await action.apply(
         actionThis as ActionThis<A, GetDataType<A, keyof A>>,
         payload
       );
-
-      const toMain = await promise;
       if (toMain !== undefined) {
         let data: MessageData = null;
         let transfer: Transferable[] = [];
