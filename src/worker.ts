@@ -149,9 +149,12 @@ export interface KeyMsgFromWorker extends Pick<MsgFromWorker, "id"> {
   done?: boolean;
 }
 
-export type ActionWithThis<A extends CommonActions> = {
+export type ActionWithThis<
+  A extends CommonActions,
+  D extends true | any = true,
+> = {
   [K in keyof A]: (
-    this: ActionThis<A, GetDataType<A, K>>,
+    this: ActionThis<A, D extends true ? GetDataType<A, K> : any>,
     ...args: Parameters<A[K]>
   ) => ReturnType<A[K]>;
 };
@@ -166,10 +169,14 @@ type MsgDataFromMain = {
   id: number;
 };
 
-type PostMsgWithId<D extends MessageData = MessageData> = (
-  data: D,
-  transfer?: Transferable[]
-) => void;
+// type PostMsgWithId<D extends MessageData = MessageData> = (
+//   data: D,
+//   transfer?: Transferable[]
+// ) => void;
+
+type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
+  ? (data?: undefined, transfer?: Transferable[]) => void
+  : (data: Exclude<D, undefined>, transfer?: Transferable[]) => void;
 
 type ActionThis<
   A extends CommonActions = CommonActions,
@@ -177,12 +184,7 @@ type ActionThis<
 > = {
   $post: PostMsgWithId<D>;
   $end: PostMsgWithId<D>;
-} & {
-  [K in keyof A]: (
-    this: ActionThis<A, any>,
-    ...args: Parameters<A[K]>
-  ) => ReturnType<A[K]>;
-};
+} & ActionWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
 
 function _postMessage(
   message: MsgFromWorker,
@@ -222,7 +224,10 @@ export function createOnmessage<A extends CommonActions>(
     };
     postMessage(startSignalMsg);
 
-    const postMsgWithId: PostMsgWithId = (data, transfer = []) => {
+    const postMsgWithId: PostMsgWithId = (
+      data?: MessageData,
+      transfer: Transferable[] = []
+    ) => {
       const done = false;
       const msgFromWorker: MsgFromWorker = {
         data,
@@ -232,7 +237,10 @@ export function createOnmessage<A extends CommonActions>(
       _postMessage(msgFromWorker, id, done, transfer);
     };
 
-    const postResultWithId: PostMsgWithId = (data, transfer = []) => {
+    const postResultWithId: PostMsgWithId = (
+      data?: MessageData,
+      transfer: Transferable[] = []
+    ) => {
       Promise.resolve([data, transfer]).then((res) => {
         const toMain: Awaited<ReturnType<A[string]>> = res as any;
         let data: MessageData = null;
@@ -253,7 +261,7 @@ export function createOnmessage<A extends CommonActions>(
       });
     };
 
-    const boundActions = { ...actions };
+    const boundActions = { ...actions } as ActionWithThis<A, any>;
 
     const actionThis: ActionThis<A> = {
       $post: postMsgWithId,
@@ -261,8 +269,8 @@ export function createOnmessage<A extends CommonActions>(
       ...boundActions,
     };
 
-    for (const k in actions) {
-      const boundAction = actions[k].bind(actionThis);
+    for (const k in boundActions) {
+      const boundAction = boundActions[k].bind(actionThis);
       boundActions[k] = boundAction;
       actionThis[k] = boundAction as any;
     }
@@ -271,7 +279,7 @@ export function createOnmessage<A extends CommonActions>(
 
     try {
       let promise: ReturnType<typeof action> = action.apply(
-        actionThis,
+        actionThis as ActionThis<A, GetDataType<A, keyof A>>,
         payload
       );
 
