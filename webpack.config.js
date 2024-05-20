@@ -7,32 +7,8 @@ const CopyWebpackPlugin = require("copy-webpack-plugin");
 const isProduction = process.env.NODE_ENV == "production";
 const useJs = process.env.NODE_ENV === "useJs";
 
-const config = {
-  // Add your plugins here
-  // Learn more about plugins from https://webpack.js.org/configuration/plugins/
-
-  module: {
-    rules: [
-      {
-        test: /\.(ts|tsx)$/i,
-        loader: "ts-loader",
-        exclude: ["/node_modules/"],
-      },
-      {
-        test: /\.(eot|svg|ttf|woff|woff2|png|jpg|gif)$/i,
-        type: "asset",
-      },
-
-      // Add your rules for custom modules here
-      // Learn more about loaders from https://webpack.js.org/loaders/
-    ],
-  },
-  plugins: [],
-  resolve: {
-    extensions: [".tsx", ".ts", ".jsx", ".js", "..."],
-    modules: ["node_modules", path.resolve(__dirname, "./")],
-  },
-};
+const webpackConfig = require("./webpack.common.config");
+const config = { ...webpackConfig };
 
 module.exports = () => {
   if (isProduction) {
@@ -69,9 +45,7 @@ module.exports = () => {
     );
   } else {
     config.mode = "development";
-    config.entry = useJs
-      ? "./src/demo/demo.main.js"
-      : "./src/demo/demo.main.ts";
+    config.entry = useJs ? "./demo/demo.main.js" : "./demo/demo.main.ts";
     config.output = {
       path: path.resolve(__dirname, "dist/demo"),
     };

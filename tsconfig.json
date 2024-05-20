@@ -15,12 +15,18 @@
     "allowJs": true,
     "baseUrl": ".",
     "sourceMap": true,
-
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": [
+    "src",
+    "demo",
+    "test",
+  ],
+  "exclude": [
+    "**/dist"
+  ]
 }
