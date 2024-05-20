@@ -4,6 +4,7 @@ import {
   pingLaterPort,
   returnVoidPort,
   returnNullPort,
+  // Insert Ports to be imported above this line.
 } from "demo/demo.main";
 
 describe("worker-handler", function () {
@@ -31,4 +32,6 @@ describe("worker-handler", function () {
     const { data } = await returnNullPort.promise;
     expect(data).to.equal(null);
   });
+
+  // Insert test cases above this line.
 });

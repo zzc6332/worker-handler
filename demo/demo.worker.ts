@@ -9,8 +9,11 @@ export type DemoActions = {
     duration: number
   ) => ActionResult<string | void>;
 
-  returnVoid: () => ActionResult<void>;
+  returnVoid: () => ActionResult;
+
   returnNull: () => ActionResult<null>;
+
+  // Insert ActionTypes above this line
 };
 
 onmessage = createOnmessage<DemoActions>({
@@ -40,4 +43,6 @@ onmessage = createOnmessage<DemoActions>({
   async returnNull() {
     return null;
   },
+
+  // Insert Actions above this line
 });

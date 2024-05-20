@@ -2,3 +2,4 @@ node_modules
 *.code-workspace
 dist
 .vscode
+backups

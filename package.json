@@ -9,7 +9,8 @@
     "build:prod": "webpack --mode=production --node-env=production",
     "watch": "webpack --watch",
     "dev": "webpack serve",
-    "devjs": "webpack serve --node-env=useJs"
+    "devjs": "webpack serve --node-env=useJs",
+    "case": "node ./scripts/add-test-case.js"
   },
   "keywords": [],
   "sideEffects": [
