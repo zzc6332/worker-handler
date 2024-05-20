@@ -119,7 +119,7 @@ type Prev<N extends number | null> = N extends 1
 //#region  - actions 中的各种类型
 
 export type ActionResult<
-  D extends MessageData | void = MessageData,
+  D extends MessageData | void = void,
   T extends Transferable[] = Transfer<Exclude<D, void>>,
 > = Promise<
   D extends void
@@ -132,7 +132,10 @@ export type ActionResult<
 >;
 
 export type CommonActions = {
-  [K: string]: (this: ActionThis, ...args: any[]) => ActionResult;
+  [K: string]: (
+    this: ActionThis,
+    ...args: any[]
+  ) => ActionResult<MessageData | void>;
 };
 
 export type MsgFromWorker<D = MessageData> = {
