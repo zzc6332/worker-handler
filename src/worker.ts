@@ -172,14 +172,14 @@ type MsgDataFromMain = {
   id: number;
 };
 
-// type PostMsgWithId<D extends MessageData = MessageData> = (
-//   data: D,
-//   transfer?: Transferable[]
-// ) => void;
-
 type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
-  ? (data?: undefined, transfer?: Transferable[]) => void
-  : (data: Exclude<D, undefined>, transfer?: Transferable[]) => void;
+  ? (data?: undefined, transfer?: []) => void
+  : GetTransferables<D, 10> extends null
+    ? (data: Exclude<D, undefined>, transfer?: []) => void
+    : (
+        data: Exclude<D, undefined>,
+        transfer: Transfer<Exclude<D, undefined>, []>
+      ) => void;
 
 type ActionThis<
   A extends CommonActions = CommonActions,
@@ -273,7 +273,7 @@ export function createOnmessage<A extends CommonActions>(
     };
 
     for (const k in boundActions) {
-      const boundAction = boundActions[k].bind(actionThis);
+      const boundAction = boundActions[k].bind(actionThis as any);
       boundActions[k] = boundAction;
       actionThis[k] = boundAction as any;
     }
