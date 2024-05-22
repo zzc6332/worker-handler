@@ -258,7 +258,7 @@ onmessage = createOnmessage<DemoActions>({
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
 export type DemoActions = {
-  returnVoid: () => ActionResult<void>;
+  returnVoid: () => ActionResult;
 };
 
 onmessage = createOnmessage<DemoActions>({
@@ -436,3 +436,5 @@ demoWorker
 传入的泛型参数同时会影响到 `Action` 中 `this.$post()` 和 `this.$end()` 接收的参数类型。
 
 如果 `Action` 不需要显式返回一个值，则传入的泛型参数需要包含 `void`，如 `ActionResult<string | void>`。
+
+如果不传递任何泛型参数，则等同于 `ActionResult<void>`。

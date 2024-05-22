@@ -261,7 +261,7 @@ onmessage = createOnmessage<DemoActions>({
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
 export type DemoActions = {
-  returnVoid: () => ActionResult<void>;
+  returnVoid: () => ActionResult;
 };
 
 onmessage = createOnmessage<DemoActions>({
@@ -441,3 +441,4 @@ The generic parameter passed also affects the types of parameters received by `t
 
 If the `Action` does not need to return a value explicitly, the generic parameter passed should include `void`, such as `ActionResult<string | void>`.
 
+If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
