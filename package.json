@@ -1,7 +1,6 @@
 {
   "name": "worker-handler",
-  "version": "0.1.5",
-  "description": "",
+  "version": "0.1.6",
   "scripts": {
     "test": "karma start",
     "build": "webpack --mode=production --node-env=production",
@@ -12,17 +11,7 @@
     "devjs": "webpack serve --node-env=useJs",
     "case": "node ./scripts/add-test-case.js"
   },
-  "keywords": [],
-  "sideEffects": [
-    "./src/main.ts",
-    "./src/worker.ts"
-  ],
-  "author": "",
   "license": "ISC",
-  "dependencies": {
-    "pdfjs-dist": "^4.2.67",
-    "worker-handler": "^0.1.4"
-  },
   "devDependencies": {
     "@types/chai": "^4.3.16",
     "@types/mocha": "^10.0.6",
