@@ -95,15 +95,9 @@ async function execute(caseNames) {
       (_, caseName) => `  ${caseName}Port,`
     )(
       "  // Insert test cases above this line.",
-      (_, caseName) => `  it("${caseName}", async function () {});\n`
+      (_, caseName) => `  it("${caseName}", async function () {\n    const { data } = await ${caseName}Port.promise;\n  });\n`
     ).promise,
   ];
-
-  // inserteds.forEach((promise) => {
-  //   promise.then((res) => {
-  //     console.log(res[1] + " 添加 case 成功，正在准备写入......");
-  //   });
-  // });
 
   // 获取到所有的修改后的文件内容
   const newContents = await Promise.all(inserteds);
