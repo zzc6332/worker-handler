@@ -13,6 +13,14 @@ export type DemoActions = {
 
   returnNull: () => ActionResult<null>;
 
+  receiveAndReturnOffscreenCanvas1: (
+    offscreen: OffscreenCanvas
+  ) => ActionResult<OffscreenCanvas | void>;
+
+  receiveAndReturnOffscreenCanvas2: (
+    offscreen: OffscreenCanvas
+  ) => ActionResult<OffscreenCanvas>;
+
   // Insert ActionTypes above this line
 };
 
@@ -42,6 +50,14 @@ onmessage = createOnmessage<DemoActions>({
 
   async returnNull() {
     return null;
+  },
+
+  async receiveAndReturnOffscreenCanvas1(offscreen) {
+    this.$end(offscreen, [offscreen]);
+  },
+
+  async receiveAndReturnOffscreenCanvas2(offscreen) {
+    return [offscreen, [offscreen]];
   },
 
   // Insert Actions above this line
