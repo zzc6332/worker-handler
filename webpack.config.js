@@ -40,6 +40,7 @@ module.exports = () => {
             to: "package.json",
           },
           { from: "README.md", to: "README.md" },
+          { from: "LICENSE", to: "LICENSE" },
         ],
       })
     );
