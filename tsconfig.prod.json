@@ -18,5 +18,4 @@
     "declarationDir": "./dist/release"
   },
   "include": ["src"],
-  "exclude": ["src/demo"]
 }
