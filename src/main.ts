@@ -50,54 +50,11 @@ export class WorkerHandler<A extends CommonActions> {
     this.handleListeners(initialListenerMap);
   }
 
-  get instance() {
-    return this.worker;
-  }
-
-  terminate(getListenerCount?: boolean) {
-    this.worker.terminate();
-    this.listenerMapsSet.forEach((listenerMap) => {
-      this.handleListeners(listenerMap, false);
-    });
-    this.listenerMapsSet.clear();
-    this.messageChannelsSet.forEach((messageChannel) => {
-      const {
-        readyState,
-        messageChannel: { port1, port2 },
-      } = messageChannel;
-      readyState.current = 2;
-      port1.close();
-      port2.close();
-    });
-    this.messageChannelsSet.clear();
-    if (getListenerCount) return this.listenerMapsSet.size;
-  }
-
-  private postMsgToWorker<K extends keyof A>(
-    actionName: K,
-    options: ExecuteOptions | Transferable[] | number,
-    ...payload: Parameters<A[K]>
-  ) {
-    let transfer: Transferable[] = [];
-    let timeout: number = 0;
-    if (Array.isArray(options)) {
-      transfer = options;
-    } else if (typeof options === "number") {
-      timeout = options;
-    } else {
-      transfer = options.transfer || [];
-      timeout = options.timeout || 0;
-    }
-
-    const message = { actionName, payload, id: this.id++ };
-    try {
-      this.worker.postMessage(message, transfer);
-    } catch (error) {
-      console.error(error);
-    }
-    return [message.id, timeout] as [number, number];
-  }
-
+  /**
+   * 用于批量管理（添加或移除）事件监听器
+   * @param listenerMap 要管理的事件类型和事件回调的映射关系
+   * @param isAdd 默认为 true ，代表添加事件监听器，如果指定为 false 则代表移除事件监听器
+   */
   private handleListeners(listenerMap: ListenerMap, isAdd: boolean = true) {
     for (const key in listenerMap) {
       if (isAdd) {
@@ -128,62 +85,73 @@ export class WorkerHandler<A extends CommonActions> {
     }
   }
 
-  private watchResultFromWorker<D>(
-    id: number,
-    actionName: keyof A,
-    timeout: number,
-    msgListenerMap: ListenerMap,
-    messageChannel: MessageChannel,
-    readyState: ReadyState
-  ) {
-    let resultListenerMap: ListenerMap;
-    const promise = new Promise<MsgToMain<A, D>>((resolve, reject) => {
-      if (timeout > 0) {
-        setTimeout(() => {
-          reject("timeout");
-        }, timeout);
-      }
-
-      const message = (e: MessageEvent<MsgFromWorker<D>>) => {
-        if (e.data.id === id && e.data.done && !e.data.keyMessage) {
-          const data = e.data.data as D;
-          const result: MsgToMain<A, D> = { actionName, data };
-          resolve(result);
-        }
-      };
-
-      const messageerror = (e: MessageEvent<MsgFromWorker<D>>) => {
-        if (e.data.id === id && e.data.done) {
-          reject("messageError");
-        }
-      };
-
-      const error = (e: ErrorEvent) => {
-        reject(e);
-      };
-
-      resultListenerMap = { message, messageerror, error };
-
-      this.handleListeners(resultListenerMap);
-    });
-
-    const clearEffects = () => {
-      this.handleListeners(resultListenerMap, false);
-      this.handleListeners(msgListenerMap, false);
-      messageChannel.port1.close();
-      messageChannel.port2.close();
-      readyState.current = 2;
-    };
-
-    promise
-      .catch(() => {})
-      .finally(() => {
-        clearEffects();
-      });
-
-    return promise;
+  get instance() {
+    return this.worker;
   }
 
+  /**
+   * 终止 worker 进程，并移除主线程上为 worker 进程添加的监听器
+   * @param getListenerCount 布尔值，用于指定是否需要返回值，仅用于调试
+   * @returns 如果 getListenerCount 指定为 true，则会返回一个数字，表示主线程上还剩多少被终止的 worker 进程的监听器，仅用于调试
+   */
+  terminate(getListenerCount?: boolean) {
+    this.worker.terminate();
+    this.listenerMapsSet.forEach((listenerMap) => {
+      this.handleListeners(listenerMap, false);
+    });
+    this.listenerMapsSet.clear();
+    this.messageChannelsSet.forEach((messageChannel) => {
+      const {
+        readyState,
+        messageChannel: { port1, port2 },
+      } = messageChannel;
+      readyState.current = 2;
+      port1.close();
+      port2.close();
+    });
+    this.messageChannelsSet.clear();
+    if (getListenerCount) return this.listenerMapsSet.size;
+  }
+
+  /**
+   * 传递消息传递给 worker，使得 worker 调用 action
+   * @param actionName action 的名称
+   * @param options 配置选项
+   * @param payload action 接收参数
+   * @returns [id, timeout]
+   */
+  private postMsgToWorker<K extends keyof A>(
+    actionName: K,
+    options: ExecuteOptions | Transferable[] | number,
+    ...payload: Parameters<A[K]>
+  ) {
+    let transfer: Transferable[] = [];
+    let timeout: number = 0;
+    if (Array.isArray(options)) {
+      transfer = options;
+    } else if (typeof options === "number") {
+      timeout = options;
+    } else {
+      transfer = options.transfer || [];
+      timeout = options.timeout || 0;
+    }
+
+    const message = { actionName, payload, id: this.id++ };
+    try {
+      this.worker.postMessage(message, transfer);
+    } catch (error) {
+      console.error(error);
+    }
+    return [message.id, timeout] as [number, number];
+  }
+
+  /**
+   * 当传递消息给 worker 后，监听产生的非终止消息
+   * @param id
+   * @param actionName
+   * @param readyState
+   * @returns [messagePort, receivePort, listenerMap, messageChannel]
+   */
   private watchMsgFromWorker<D>(
     id: number,
     actionName: keyof A,
@@ -193,8 +161,8 @@ export class WorkerHandler<A extends CommonActions> {
 
     this.messageChannelsSet.add({ messageChannel, readyState });
 
+    // sendPort 用于将从 worker 中接收到的数据发送给 recievePort，recievePort 会被用于生成 messageSource，作为 this.execute() 的返回值暴露出去
     const { port1: sendPort, port2: receivePort } = messageChannel;
-
     sendPort.start();
     receivePort.start();
 
@@ -272,6 +240,79 @@ export class WorkerHandler<A extends CommonActions> {
     ];
   }
 
+  /**
+   * 当传递消息给 worker 后，监听产生的终止消息
+   * @param id
+   * @param actionName
+   * @param timeout
+   * @param msgListenerMap
+   * @param messageChannel
+   * @param readyState
+   * @returns promise
+   */
+  private watchResultFromWorker<D>(
+    id: number,
+    actionName: keyof A,
+    timeout: number,
+    msgListenerMap: ListenerMap,
+    messageChannel: MessageChannel,
+    readyState: ReadyState
+  ) {
+    let resultListenerMap: ListenerMap;
+    const promise = new Promise<MsgToMain<A, D>>((resolve, reject) => {
+      if (timeout > 0) {
+        setTimeout(() => {
+          reject("timeout");
+        }, timeout);
+      }
+
+      const message = (e: MessageEvent<MsgFromWorker<D>>) => {
+        if (e.data.id === id && e.data.done && !e.data.keyMessage) {
+          const data = e.data.data as D;
+          const result: MsgToMain<A, D> = { actionName, data };
+          resolve(result);
+        }
+      };
+
+      const messageerror = (e: MessageEvent<MsgFromWorker<D>>) => {
+        if (e.data.id === id && e.data.done) {
+          reject("messageError");
+        }
+      };
+
+      const error = (e: ErrorEvent) => {
+        reject(e);
+      };
+
+      resultListenerMap = { message, messageerror, error };
+
+      this.handleListeners(resultListenerMap);
+    });
+
+    const clearEffects = () => {
+      this.handleListeners(resultListenerMap, false);
+      this.handleListeners(msgListenerMap, false);
+      messageChannel.port1.close();
+      messageChannel.port2.close();
+      readyState.current = 2;
+    };
+
+    promise
+      .catch(() => {})
+      .finally(() => {
+        clearEffects();
+      });
+
+    return promise;
+  }
+
+  /**
+   * 执行一次 action 调用
+   * @param actionName action 名称
+   * @param options 选项
+   * @param payload action 接收的参数
+   * @returns messageSource
+   */
   execute<K extends keyof A, D extends Parameters<A[K]> = Parameters<A[K]>>(
     actionName: K,
     options?: ExecuteOptions<D> | Transfer<D, number | null | undefined>,
@@ -298,9 +339,11 @@ export class WorkerHandler<A extends CommonActions> {
     );
 
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
+      // ...receivePort,
       ...messagePort,
       readyState: 0,
       addEventListener: (type, listener) => {
+        // receivePort.addEventListener(type, listener);
         messagePort.addEventListener(type, listener);
         return messageSource;
       },
