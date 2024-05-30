@@ -202,7 +202,7 @@ function _postMessage(
       postMessage(message, options);
     }
   } catch (error) {
-    const keyMsgFromWorker: KeyMsgFromWorker = {
+    const errorMsg: KeyMsgFromWorker = {
       keyMessage: true,
       id,
       done,
@@ -210,7 +210,7 @@ function _postMessage(
       error,
     };
     console.error(error);
-    postMessage(keyMsgFromWorker);
+    postMessage(errorMsg);
   }
 }
 
