@@ -196,44 +196,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     this.handleListeners(listenerMap);
 
-    const bindToSource = (messagePort: MessagePort): MessagePort => {
-      const boundMessagePort = { ...messagePort } as MessagePort;
-      for (const key in receivePort) {
-        const k = key as keyof MessagePort;
-        const method = receivePort[k];
-        if (typeof method === "function") {
-          boundMessagePort[k] = method.bind(messagePort) as any;
-        }
-      }
-      return boundMessagePort;
-    };
-
-    const boundReceivePort = bindToSource(receivePort);
-
-    const {
-      postMessage,
-      start,
-      close,
-      onmessage,
-      onmessageerror,
-      addEventListener,
-      removeEventListener,
-      dispatchEvent,
-    } = boundReceivePort;
-
-    const messagePort: MessagePort = {
-      postMessage,
-      start,
-      close,
-      onmessage,
-      onmessageerror,
-      addEventListener,
-      removeEventListener,
-      dispatchEvent,
-    };
-
-    return [messagePort, receivePort, listenerMap, messageChannel] as [
-      MessagePort,
+    return [receivePort, listenerMap, messageChannel] as [
       MessagePort,
       ListenerMap,
       MessageChannel,
@@ -326,7 +289,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     const readyState: ReadyState = { current: 0 };
 
-    const [messagePort, receivePort, msgListenerMap, messageChannel] =
+    const [receivePort, msgListenerMap, messageChannel] =
       this.watchMsgFromWorker(id, actionName, readyState);
 
     const promise = this.watchResultFromWorker<GetDataType<A, K>>(
@@ -338,13 +301,24 @@ export class WorkerHandler<A extends CommonActions> {
       readyState
     );
 
+    // boundReceivePort 中的方法都绑定了 receivePort 作为 this
+    const boundReceivePort = (function getBoundReceivePort() {
+      const boundReceivePort = { ...receivePort } as MessagePort;
+      for (const key in receivePort) {
+        const k = key as keyof MessagePort;
+        const method = receivePort[k];
+        if (typeof method === "function") {
+          boundReceivePort[k] = method.bind(receivePort) as any;
+        }
+      }
+      return boundReceivePort;
+    })();
+
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
-      // ...receivePort,
-      ...messagePort,
+      ...boundReceivePort,
       readyState: 0,
       addEventListener: (type, listener) => {
-        // receivePort.addEventListener(type, listener);
-        messagePort.addEventListener(type, listener);
+        receivePort.addEventListener(type, listener);
         return messageSource;
       },
       promise,
