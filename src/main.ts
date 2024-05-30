@@ -314,15 +314,34 @@ export class WorkerHandler<A extends CommonActions> {
       return boundReceivePort;
     })();
 
+    type ListenerTuple = [
+      "message" | "messageerror",
+      (this: MessagePort, ev: MessageEvent<any>) => any,
+    ];
+
+    // listenerSet 中存放通过 messageSource.addEventListener() 添加的监听器信息，当本次通信完毕后移除 listenerSet 中的所有监听器
+    let listenerSet = new Set<ListenerTuple>();
+
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
       ...boundReceivePort,
       readyState: 0,
       addEventListener: (type, listener) => {
         receivePort.addEventListener(type, listener);
+        listenerSet.add([type, listener]);
         return messageSource;
       },
       promise,
     };
+
+    promise
+      .catch(() => {})
+      .finally(() => {
+        listenerSet.forEach((listenerTuple) => {
+          console.log(listenerTuple);
+          receivePort.removeEventListener(listenerTuple[0], listenerTuple[1]);
+        });
+        listenerSet.clear();
+      });
 
     let messageerrorCallback:
       | ((this: MessagePort, ev: MessageEvent) => any)
@@ -331,7 +350,9 @@ export class WorkerHandler<A extends CommonActions> {
     Object.defineProperties(messageSource, {
       readyState: {
         get: () => readyState.current,
-        set: () => {},
+        set: () => {
+          console.warn(`'readyState' is read-only.`);
+        },
       },
       onmessage: {
         set: (value: ((this: MessagePort, ev: MessageEvent) => any) | null) => {
@@ -381,7 +402,7 @@ type ListenerMap = {
 interface MessageSource<D, A extends CommonActions>
   extends Omit<MessagePort, "addEventListener"> {
   promise: Promise<MsgToMain<A, D>>;
-  readyState: ReadyState["current"];
+  readonly readyState: ReadyState["current"];
   onmessage: ((this: MessagePort, ev: MessageEvent<D>) => any) | null;
   addEventListener(
     type: "message",
