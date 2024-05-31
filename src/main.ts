@@ -3,7 +3,6 @@ import {
   MsgFromWorker,
   ActionResult,
   MessageData,
-  KeyMsgFromWorker,
   Transfer,
 } from "./worker";
 
@@ -35,13 +34,12 @@ export class WorkerHandler<A extends CommonActions> {
       this.worker = new Worker(workerSrc, _options);
     }
     const initialListenerMap = {
-      message: (e: MessageEvent<KeyMsgFromWorker>) => {
-        if (!e.data.keyMessage) return;
+      message: (e: MessageEvent<MsgFromWorker>) => {
         if (e.data.type === "message_error") {
           this.worker.dispatchEvent(
             new MessageEvent(
               "messageerror",
-              e as unknown as MessageEventInit<KeyMsgFromWorker>
+              e as unknown as MessageEventInit<MsgFromWorker<"message_error">>
             )
           );
         }
@@ -168,21 +166,21 @@ export class WorkerHandler<A extends CommonActions> {
 
     this.worker.addEventListener(
       "message",
-      (e: MessageEvent<KeyMsgFromWorker>) => {
-        if (!e.data.keyMessage || e.data.type !== "start_signal") return;
+      (e: MessageEvent<MsgFromWorker<"start_signal">>) => {
+        if (e.data.type !== "start_signal") return;
         readyState.current = 1;
       },
       { once: true }
     );
 
-    const message = (e: MessageEvent<MsgFromWorker<D>>) => {
-      if (e.data.id === id && !e.data.done && !e.data.keyMessage) {
+    const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
+      if (e.data.type === "action_data" && e.data.id === id && !e.data.done) {
         const data = e.data.data as D;
         sendPort.postMessage(data);
       }
     };
 
-    const messageerror = (e: MessageEvent<KeyMsgFromWorker>) => {
+    const messageerror = (e: MessageEvent<MsgFromWorker<"message_error">>) => {
       if (e.data.id === id && !e.data.done) {
         receivePort.dispatchEvent(
           new MessageEvent("messageerror", {
@@ -229,17 +227,21 @@ export class WorkerHandler<A extends CommonActions> {
         }, timeout);
       }
 
-      const message = (e: MessageEvent<MsgFromWorker<D>>) => {
-        if (e.data.id === id && e.data.done && !e.data.keyMessage) {
+      const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
+        if (e.data.type === "action_data" && e.data.id === id && e.data.done) {
           const data = e.data.data as D;
           const result: MsgToMain<A, D> = { actionName, data };
           resolve(result);
         }
       };
 
-      const messageerror = (e: MessageEvent<MsgFromWorker<D>>) => {
+      const messageerror = (
+        e: MessageEvent<MsgFromWorker<"message_error", D>>
+      ) => {
         if (e.data.id === id && e.data.done) {
-          reject("messageError");
+          reject({
+            data: { actionName, error: e.data.error },
+          });
         }
       };
 

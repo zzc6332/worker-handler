@@ -138,19 +138,33 @@ export type CommonActions = {
   ) => ActionResult<MessageData | void>;
 };
 
-export type MsgFromWorker<D = MessageData> = {
-  data?: D;
+type MsgType =
+  | "action_data"
+  | "start_signal"
+  | "message_error"
+  | "create_proxy";
+
+type MsgFromWorkerBasic<D = MessageData> = {
+  type: MsgType;
+  data: D;
   id: number;
   done: boolean;
-  keyMessage?: false;
+  error: any;
+  proxyId: number;
 };
 
-export interface KeyMsgFromWorker extends Pick<MsgFromWorker, "id"> {
-  keyMessage: true;
-  type: string;
-  error?: any;
-  done?: boolean;
-}
+export type MsgFromWorker<
+  T extends MsgType = MsgType,
+  D = MessageData,
+> = T extends "action_data"
+  ? { type: T } & Pick<MsgFromWorkerBasic<D>, "data" | "id" | "done">
+  : T extends "message_error"
+    ? { type: T } & Pick<MsgFromWorkerBasic, "id" | "done" | "error">
+    : T extends "start_signal"
+      ? { type: T } & Pick<MsgFromWorkerBasic, "id">
+      : T extends "create_proxy"
+        ? { type: T } & Pick<MsgFromWorkerBasic, "id" | "proxyId">
+        : never;
 
 export type ActionWithThis<
   A extends CommonActions,
@@ -190,7 +204,7 @@ type ActionThis<
 } & ActionWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
 
 function _postMessage(
-  message: MsgFromWorker,
+  message: MsgFromWorker<"action_data">,
   options?: Transferable[] | StructuredSerializeOptions
 ) {
   try {
@@ -201,8 +215,7 @@ function _postMessage(
     }
   } catch (error) {
     const { id, done } = message;
-    const errorMsg: KeyMsgFromWorker = {
-      keyMessage: true,
+    const errorMsg: MsgFromWorker<"message_error"> = {
       id,
       done,
       type: "message_error",
@@ -212,6 +225,7 @@ function _postMessage(
     postMessage(errorMsg);
   }
 }
+//#endregion
 
 export function createOnmessage<A extends CommonActions>(
   actions: ActionWithThis<A>
@@ -219,8 +233,7 @@ export function createOnmessage<A extends CommonActions>(
   return async (e: MessageEvent<MsgDataFromMain>) => {
     const { actionName, payload, id } = e.data;
 
-    const startSignalMsg: KeyMsgFromWorker = {
-      keyMessage: true,
+    const startSignalMsg: MsgFromWorker<"start_signal"> = {
       id,
       type: "start_signal",
     };
@@ -231,10 +244,11 @@ export function createOnmessage<A extends CommonActions>(
       transfer: Transferable[] = []
     ) => {
       const done = false;
-      const msgFromWorker: MsgFromWorker = {
+      const msgFromWorker: MsgFromWorker<"action_data"> = {
         data,
         id,
         done,
+        type: "action_data",
       };
       _postMessage(msgFromWorker, transfer);
     };
@@ -254,10 +268,11 @@ export function createOnmessage<A extends CommonActions>(
           data = toMain;
         }
         const done = true;
-        const resultFromWorker: MsgFromWorker = {
+        const resultFromWorker: MsgFromWorker<"action_data"> = {
           data,
           id,
           done,
+          type: "action_data",
         };
         _postMessage(resultFromWorker, transfer);
       });
@@ -294,10 +309,11 @@ export function createOnmessage<A extends CommonActions>(
           data = toMain;
         }
         const done = true;
-        const resultFromWorker: MsgFromWorker = {
+        const resultFromWorker: MsgFromWorker<"action_data"> = {
           data,
           id,
           done,
+          type: "action_data",
         };
         _postMessage(resultFromWorker, transfer);
       }
