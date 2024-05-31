@@ -191,8 +191,6 @@ type ActionThis<
 
 function _postMessage(
   message: MsgFromWorker,
-  id: number,
-  done: boolean,
   options?: Transferable[] | StructuredSerializeOptions
 ) {
   try {
@@ -202,6 +200,7 @@ function _postMessage(
       postMessage(message, options);
     }
   } catch (error) {
+    const { id, done } = message;
     const errorMsg: KeyMsgFromWorker = {
       keyMessage: true,
       id,
@@ -237,7 +236,7 @@ export function createOnmessage<A extends CommonActions>(
         id,
         done,
       };
-      _postMessage(msgFromWorker, id, done, transfer);
+      _postMessage(msgFromWorker, transfer);
     };
 
     const postResultWithId: PostMsgWithId = (
@@ -260,7 +259,7 @@ export function createOnmessage<A extends CommonActions>(
           id,
           done,
         };
-        _postMessage(resultFromWorker, id, done, transfer);
+        _postMessage(resultFromWorker, transfer);
       });
     };
 
@@ -300,7 +299,7 @@ export function createOnmessage<A extends CommonActions>(
           id,
           done,
         };
-        _postMessage(resultFromWorker, id, done, transfer);
+        _postMessage(resultFromWorker, transfer);
       }
     } catch (error: any) {
       if (
