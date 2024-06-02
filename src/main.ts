@@ -167,8 +167,8 @@ export class WorkerHandler<A extends CommonActions> {
     this.worker.addEventListener(
       "message",
       (e: MessageEvent<MsgFromWorker<"start_signal">>) => {
-        if (e.data.type !== "start_signal") return;
-        readyState.current = 1;
+        if (e.data.type === "start_signal" && e.data.id === id)
+          readyState.current = 1;
       },
       { once: true }
     );
@@ -326,7 +326,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
       ...boundReceivePort,
-      readyState: 0,
+      readyState: readyState.current,
       addEventListener: (type, listener) => {
         receivePort.addEventListener(type, listener);
         listenerSet.add([type, listener]);
@@ -339,7 +339,6 @@ export class WorkerHandler<A extends CommonActions> {
       .catch(() => {})
       .finally(() => {
         listenerSet.forEach((listenerTuple) => {
-          console.log(listenerTuple);
           receivePort.removeEventListener(listenerTuple[0], listenerTuple[1]);
         });
         listenerSet.clear();
