@@ -7,8 +7,8 @@ import {
 } from "./worker";
 
 export interface MsgToMain<A extends CommonActions, D> {
-  actionName: keyof A;
-  data: D;
+  readonly actionName: keyof A;
+  readonly data: D;
 }
 
 export class WorkerHandler<A extends CommonActions> {
@@ -134,13 +134,13 @@ export class WorkerHandler<A extends CommonActions> {
       timeout = options.timeout || 0;
     }
 
-    const message = { actionName, payload, id: this.id++ };
+    const msgToWorker = { actionName, payload, id: this.id++ };
     try {
-      this.worker.postMessage(message, transfer);
+      this.worker.postMessage(msgToWorker, transfer);
     } catch (error) {
       console.error(error);
     }
-    return [message.id, timeout] as [number, number];
+    return [msgToWorker.id, timeout] as [number, number];
   }
 
   /**
@@ -175,7 +175,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
       if (e.data.type === "action_data" && e.data.id === id && !e.data.done) {
-        const data = e.data.data as D;
+        const data: MsgToMain<A, D> = { data: e.data.data, actionName };
         sendPort.postMessage(data);
       }
     };
@@ -272,6 +272,31 @@ export class WorkerHandler<A extends CommonActions> {
   }
 
   /**
+   * 将 messageSource 接收的 listener 中的参数还原为标准的 listener 的参数
+   * @param extendedListener messageSource 接收的 listener
+   * @param receivePort listener 的 this
+   * @returns 还原后的 listener
+   */
+  private reduceEventListener<A extends CommonActions>(
+    extendedListener: (
+      this: MessagePort,
+      ev: ExtendedMessageEvent<A, any>
+    ) => any,
+    receivePort: MessagePort
+  ) {
+    return (ev: MessageEvent<any>) => {
+      const extendedEventTmp: any = {};
+      for (const p in ev) {
+        let item = ev[p as keyof typeof ev];
+        if (typeof item === "function") item = item.bind(ev);
+        extendedEventTmp[p] = item;
+      }
+      const extendedEvent = { ...extendedEventTmp, ...ev.data };
+      extendedListener.call(receivePort, extendedEvent);
+    };
+  }
+
+  /**
    * 执行一次 action 调用
    * @param actionName action 名称
    * @param options 选项
@@ -327,7 +352,11 @@ export class WorkerHandler<A extends CommonActions> {
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
       ...boundReceivePort,
       readyState: readyState.current,
-      addEventListener: (type, listener) => {
+      addEventListener: (type, extendedListener) => {
+        const listener = this.reduceEventListener(
+          extendedListener,
+          receivePort
+        );
         receivePort.addEventListener(type, listener);
         listenerSet.add([type, listener]);
         return messageSource;
@@ -356,22 +385,43 @@ export class WorkerHandler<A extends CommonActions> {
         },
       },
       onmessage: {
-        set: (value: ((this: MessagePort, ev: MessageEvent) => any) | null) => {
-          receivePort.onmessage = value;
+        set: (
+          extendedOnmessage:
+            | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
+            | null
+        ) => {
+          if (extendedOnmessage) {
+            receivePort.onmessage = this.reduceEventListener(
+              extendedOnmessage,
+              receivePort
+            );
+          } else {
+            receivePort.onmessage = null;
+          }
         },
         get: () => receivePort.onmessage,
       },
       onmessageerror: {
-        set: (value: ((this: MessagePort, ev: MessageEvent) => any) | null) => {
+        set: (
+          extendedOnmessageerror:
+            | ((this: MessagePort, ev: MessageEvent<A>) => any)
+            | null
+        ) => {
+          // 由于 messageerror 事件是使用 dispatchEvent 触发的，仅对 addEventListener() 生效，因此这里使用 addEventListener() 来模拟
           if (messageerrorCallback) {
             receivePort.removeEventListener(
               "messageerror",
               messageerrorCallback
             );
           }
-          messageerrorCallback = value;
-          if (value) {
-            receivePort.addEventListener("messageerror", value);
+          if (extendedOnmessageerror) {
+            messageerrorCallback = this.reduceEventListener(
+              extendedOnmessageerror,
+              receivePort
+            );
+            receivePort.addEventListener("messageerror", messageerrorCallback);
+          } else {
+            messageerrorCallback = null;
           }
         },
         get: () => messageerrorCallback,
@@ -400,19 +450,31 @@ type ListenerMap = {
   error?: (e: ErrorEvent) => any;
 };
 
+interface ExtendedMessageEvent<A extends CommonActions, D>
+  extends MessageEvent<D>,
+    MsgToMain<A, D> {}
+
 interface MessageSource<D, A extends CommonActions>
-  extends Omit<MessagePort, "addEventListener"> {
+  extends Omit<
+    MessagePort,
+    "addEventListener" | "onmessage" | "onmessageerror"
+  > {
   promise: Promise<MsgToMain<A, D>>;
   readonly readyState: ReadyState["current"];
-  onmessage: ((this: MessagePort, ev: MessageEvent<D>) => any) | null;
+  onmessage:
+    | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
+    | null;
+  onmessageerror:
+    | ((this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any)
+    | null;
   addEventListener(
     type: "message",
-    listener: (this: MessagePort, ev: MessageEvent<D>) => any,
+    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
   addEventListener(
     type: "messageerror",
-    listener: (this: MessagePort, ev: MessageEvent<any>) => any,
+    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
 }
