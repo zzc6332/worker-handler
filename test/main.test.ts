@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import {
+import worker, {
   pingIntervalPort,
   pingLaterPort,
   returnVoidPort,
@@ -11,7 +11,7 @@ import {
 
 type IsEqual<T, U> = T extends U ? (U extends T ? true : false) : false;
 
-describe("worker-handler", function () {
+describe("actions", () => {
   it("pingInterval", async function () {
     let counter = 0;
     pingIntervalPort.addEventListener("message", (e) => {
@@ -68,4 +68,11 @@ describe("worker-handler", function () {
   });
 
   // Insert test cases above this line.
+});
+
+describe("terminate", () => {
+  it("listenerCount", async function () {
+    const listenerCount = worker.terminate(true);
+    expect(listenerCount).to.equal(0);
+  });
 });
