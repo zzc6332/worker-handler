@@ -6,7 +6,7 @@ import {
   Transfer,
 } from "./worker";
 
-export interface MsgToMain<A extends CommonActions, D> {
+export interface MsgData<A extends CommonActions, D> {
   readonly actionName: keyof A;
   readonly data: D;
 }
@@ -180,7 +180,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
       if (e.data.type === "action_data" && e.data.id === id && !e.data.done) {
-        const data: MsgToMain<A, D> = { data: e.data.data, actionName };
+        const data: MsgData<A, D> = { data: e.data.data, actionName };
         sendPort.postMessage(data);
       }
     };
@@ -225,7 +225,7 @@ export class WorkerHandler<A extends CommonActions> {
     readyState: ReadyState
   ) {
     let resultListenerMap: ListenerMap;
-    const promise = new Promise<MsgToMain<A, D>>((resolve, reject) => {
+    const promise = new Promise<MsgData<A, D>>((resolve, reject) => {
       if (timeout > 0) {
         setTimeout(() => {
           reject("timeout");
@@ -235,7 +235,7 @@ export class WorkerHandler<A extends CommonActions> {
       const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
         if (e.data.type === "action_data" && e.data.id === id && e.data.done) {
           const data = e.data.data as D;
-          const result: MsgToMain<A, D> = { actionName, data };
+          const result: MsgData<A, D> = { actionName, data };
           resolve(result);
         }
       };
@@ -457,14 +457,14 @@ type ListenerMap = {
 
 interface ExtendedMessageEvent<A extends CommonActions, D>
   extends MessageEvent<D>,
-    MsgToMain<A, D> {}
+    MsgData<A, D> {}
 
 interface MessageSource<D, A extends CommonActions>
   extends Omit<
     MessagePort,
     "addEventListener" | "onmessage" | "onmessageerror"
   > {
-  promise: Promise<MsgToMain<A, D>>;
+  promise: Promise<MsgData<A, D>>;
   readonly readyState: ReadyState["current"];
   onmessage:
     | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
