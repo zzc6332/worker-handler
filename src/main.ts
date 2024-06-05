@@ -134,7 +134,12 @@ export class WorkerHandler<A extends CommonActions> {
       timeout = options.timeout || 0;
     }
 
-    const msgToWorker = { actionName, payload, id: this.id++ };
+    const msgToWorker: MsgToWorker<"execute_action", A, K> = {
+      type: "execute_action",
+      actionName,
+      payload,
+      id: this.id++,
+    };
     try {
       this.worker.postMessage(msgToWorker, transfer);
     } catch (error) {
@@ -480,3 +485,24 @@ interface MessageSource<D, A extends CommonActions>
 }
 
 type ReadyState = { current: 0 | 1 | 2 };
+
+type MsgToWorkerType = "execute_action";
+
+type MsgToWorkerBasic<
+  T extends MsgToWorkerType = MsgToWorkerType,
+  A extends CommonActions = CommonActions,
+  K extends keyof A = keyof A,
+> = {
+  type: T;
+  actionName: K;
+  payload: Parameters<A[K]>;
+  id: number;
+};
+
+export type MsgToWorker<
+  T extends MsgToWorkerType = MsgToWorkerType,
+  A extends CommonActions = CommonActions,
+  K extends keyof A = keyof A,
+> = T extends "execute_action"
+  ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
+  : never;

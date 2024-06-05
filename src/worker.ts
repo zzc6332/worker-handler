@@ -1,6 +1,6 @@
 //#region - 定义 StructuredCloneable 类型
 
-import { GetDataType } from "./main";
+import { GetDataType, MsgToWorker } from "./main";
 
 type TypedArray =
   | Int8Array
@@ -138,14 +138,17 @@ export type CommonActions = {
   ) => ActionResult<MessageData | void>;
 };
 
-type MsgType =
+type MsgFromWorkerType =
   | "action_data"
   | "start_signal"
   | "message_error"
   | "create_proxy";
 
-type MsgFromWorkerBasic<D = MessageData> = {
-  type: MsgType;
+type MsgFromWorkerBasic<
+  T extends MsgFromWorkerType = MsgFromWorkerType,
+  D = MessageData,
+> = {
+  type: T;
   data: D;
   id: number;
   done: boolean;
@@ -154,16 +157,16 @@ type MsgFromWorkerBasic<D = MessageData> = {
 };
 
 export type MsgFromWorker<
-  T extends MsgType = MsgType,
+  T extends MsgFromWorkerType = MsgFromWorkerType,
   D = MessageData,
 > = T extends "action_data"
-  ? { type: T } & Pick<MsgFromWorkerBasic<D>, "data" | "id" | "done">
+  ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "id" | "done">
   : T extends "message_error"
-    ? { type: T } & Pick<MsgFromWorkerBasic, "id" | "done" | "error">
+    ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "done" | "error">
     : T extends "start_signal"
-      ? { type: T } & Pick<MsgFromWorkerBasic, "id">
+      ? Pick<MsgFromWorkerBasic<T>, "type" | "id">
       : T extends "create_proxy"
-        ? { type: T } & Pick<MsgFromWorkerBasic, "id" | "proxyId">
+        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyId">
         : never;
 
 export type ActionWithThis<
@@ -179,12 +182,6 @@ export type ActionWithThis<
 //#endregion
 
 //#region - onmessage
-
-type MsgDataFromMain = {
-  actionName: string;
-  payload: any;
-  id: number;
-};
 
 type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
   ? (data?: undefined, transfer?: []) => void
@@ -203,6 +200,13 @@ type ActionThis<
   $end: PostMsgWithId<D>;
 } & ActionWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
 
+//#region - _postMessage
+
+/**
+ * 传递 Action 要发送的消息
+ * @param message
+ * @param options
+ */
 function _postMessage(
   message: MsgFromWorker<"action_data">,
   options?: Transferable[] | StructuredSerializeOptions
@@ -225,109 +229,120 @@ function _postMessage(
     postMessage(errorMsg);
   }
 }
+
 //#endregion
+
+//#region - createOnmessage
 
 export function createOnmessage<A extends CommonActions>(
   actions: ActionWithThis<A>
 ) {
-  return async (e: MessageEvent<MsgDataFromMain>) => {
-    const { actionName, payload, id } = e.data;
+  return async (ev: MessageEvent<MsgToWorker>) => {
+    const { type } = ev.data;
 
-    const startSignalMsg: MsgFromWorker<"start_signal"> = {
-      id,
-      type: "start_signal",
-    };
-    postMessage(startSignalMsg);
+    if (type === "execute_action") {
+      const e = ev as MessageEvent<MsgToWorker<"execute_action", A>>;
+      const { actionName, payload, id } = e.data;
 
-    const postMsgWithId: PostMsgWithId = (
-      data?: MessageData,
-      transfer: Transferable[] = []
-    ) => {
-      const done = false;
-      const msgFromWorker: MsgFromWorker<"action_data"> = {
-        data,
+      const startSignalMsg: MsgFromWorker<"start_signal"> = {
         id,
-        done,
-        type: "action_data",
+        type: "start_signal",
       };
-      _postMessage(msgFromWorker, transfer);
-    };
+      postMessage(startSignalMsg);
 
-    const postResultWithId: PostMsgWithId = (
-      data?: MessageData,
-      transfer: Transferable[] = []
-    ) => {
-      Promise.resolve([data, transfer]).then((res) => {
-        const toMain: Awaited<ReturnType<A[string]>> = res as any;
-        let data: MessageData = null;
-        let transfer: Transferable[] = [];
-        if (Array.isArray(toMain)) {
-          data = toMain[0];
-          transfer = toMain[1];
-        } else if (toMain) {
-          data = toMain;
-        }
-        const done = true;
-        const resultFromWorker: MsgFromWorker<"action_data"> = {
+      const postMsgWithId: PostMsgWithId = (
+        data?: MessageData,
+        transfer: Transferable[] = []
+      ) => {
+        const done = false;
+        const msgFromWorker: MsgFromWorker<"action_data"> = {
           data,
           id,
           done,
           type: "action_data",
         };
-        _postMessage(resultFromWorker, transfer);
-      });
-    };
+        _postMessage(msgFromWorker, transfer);
+      };
 
-    const boundActions = { ...actions } as ActionWithThis<A, any>;
+      const postResultWithId: PostMsgWithId = (
+        data?: MessageData,
+        transfer: Transferable[] = []
+      ) => {
+        Promise.resolve([data, transfer]).then((res) => {
+          const toMain: Awaited<ReturnType<A[string]>> = res as any;
+          let data: MessageData = null;
+          let transfer: Transferable[] = [];
+          if (Array.isArray(toMain)) {
+            data = toMain[0];
+            transfer = toMain[1];
+          } else if (toMain) {
+            data = toMain;
+          }
+          const done = true;
+          const resultFromWorker: MsgFromWorker<"action_data"> = {
+            data,
+            id,
+            done,
+            type: "action_data",
+          };
+          _postMessage(resultFromWorker, transfer);
+        });
+      };
 
-    const actionThis: ActionThis<A> = {
-      $post: postMsgWithId,
-      $end: postResultWithId,
-      ...boundActions,
-    };
+      const boundActions = { ...actions } as ActionWithThis<A, any>;
 
-    for (const k in boundActions) {
-      const boundAction = boundActions[k].bind(actionThis as any);
-      boundActions[k] = boundAction;
-      actionThis[k] = boundAction as any;
-    }
+      const actionThis: ActionThis<A> = {
+        $post: postMsgWithId,
+        $end: postResultWithId,
+        ...boundActions,
+      };
 
-    const action = actions[actionName];
-
-    try {
-      const toMain = await action.apply(
-        actionThis as ActionThis<A, GetDataType<A, keyof A>>,
-        payload
-      );
-      if (toMain !== undefined) {
-        let data: MessageData = null;
-        let transfer: Transferable[] = [];
-        if (Array.isArray(toMain)) {
-          data = toMain[0];
-          transfer = toMain[1];
-        } else if (toMain) {
-          data = toMain;
-        }
-        const done = true;
-        const resultFromWorker: MsgFromWorker<"action_data"> = {
-          data,
-          id,
-          done,
-          type: "action_data",
-        };
-        _postMessage(resultFromWorker, transfer);
+      for (const k in boundActions) {
+        const boundAction = boundActions[k].bind(actionThis as any);
+        boundActions[k] = boundAction;
+        actionThis[k] = boundAction as any;
       }
-    } catch (error: any) {
-      if (
-        error.message ===
-        "Cannot read properties of undefined (reading 'apply')"
-      ) {
-        if (actionName) console.warn(`'${actionName}' is not a action name.`);
-      } else {
-        throw error;
+
+      const action = actions[actionName];
+
+      try {
+        const toMain = await action.apply(
+          actionThis as ActionThis<A, GetDataType<A, keyof A>>,
+          payload
+        );
+        if (toMain !== undefined) {
+          let data: MessageData = null;
+          let transfer: Transferable[] = [];
+          if (Array.isArray(toMain)) {
+            data = toMain[0];
+            transfer = toMain[1];
+          } else if (toMain) {
+            data = toMain;
+          }
+          const done = true;
+          const resultFromWorker: MsgFromWorker<"action_data"> = {
+            data,
+            id,
+            done,
+            type: "action_data",
+          };
+          _postMessage(resultFromWorker, transfer);
+        }
+      } catch (error: any) {
+        if (
+          error.message ===
+          "Cannot read properties of undefined (reading 'apply')"
+        ) {
+          if (actionName)
+            console.warn(`'${String(actionName)}' is not a action name.`);
+        } else {
+          throw error;
+        }
       }
     }
   };
 }
+
+//#endregion
 
 //#endregion
