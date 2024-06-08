@@ -169,14 +169,16 @@ export class WorkerHandler<A extends CommonActions> {
     sendPort.start();
     receivePort.start();
 
-    this.worker.addEventListener(
-      "message",
-      (e: MessageEvent<MsgFromWorker<"start_signal">>) => {
-        if (e.data.type === "start_signal" && e.data.id === id)
+    const startSignalListenerMap: ListenerMap = {
+      message: (e: MessageEvent<MsgFromWorker<"start_signal">>) => {
+        if (e.data.type === "start_signal" && e.data.id === id) {
           readyState.current = 1;
+          this.handleListeners(startSignalListenerMap, false);
+        }
       },
-      { once: true }
-    );
+    };
+
+    this.handleListeners(startSignalListenerMap);
 
     const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
       if (e.data.type === "action_data" && e.data.id === id && !e.data.done) {
