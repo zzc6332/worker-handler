@@ -270,7 +270,12 @@ export class WorkerHandler<A extends CommonActions> {
     };
 
     promise
-      .catch(() => {})
+      .then(() => {
+        clearEffects();
+      })
+      .catch(() => {
+        clearEffects();
+      })
       .finally(() => {
         clearEffects();
       });
