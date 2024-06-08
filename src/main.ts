@@ -89,10 +89,8 @@ export class WorkerHandler<A extends CommonActions> {
 
   /**
    * 终止 worker 进程，并移除主线程上为 worker 进程添加的监听器
-   * @param getListenerCount 布尔值，用于指定是否需要返回值，仅用于调试
-   * @returns 如果 getListenerCount 指定为 true，则会返回一个数字，表示主线程上还剩多少被终止的 worker 进程的监听器，仅用于调试
    */
-  terminate(getListenerCount?: boolean) {
+  terminate() {
     this.worker.terminate();
     this.listenerMapsSet.forEach((listenerMap) => {
       this.handleListeners(listenerMap, false);
@@ -108,7 +106,6 @@ export class WorkerHandler<A extends CommonActions> {
       port2.close();
     });
     this.messageChannelsSet.clear();
-    if (getListenerCount) return this.listenerMapsSet.size;
   }
 
   /**
