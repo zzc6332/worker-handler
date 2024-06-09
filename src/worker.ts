@@ -1,6 +1,43 @@
-//#region - 定义 StructuredCloneable 类型
-
 import { GetDataType, MsgToWorker } from "./main";
+
+//#region - types
+
+//#region - message 相关
+
+type MsgFromWorkerType =
+  | "action_data"
+  | "start_signal"
+  | "message_error"
+  | "create_proxy";
+
+type MsgFromWorkerBasic<
+  T extends MsgFromWorkerType = MsgFromWorkerType,
+  D = MessageData,
+> = {
+  type: T;
+  data: D;
+  id: number;
+  done: boolean;
+  error: any;
+  proxyId: number;
+};
+
+export type MsgFromWorker<
+  T extends MsgFromWorkerType = MsgFromWorkerType,
+  D = MessageData,
+> = T extends "action_data"
+  ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "id" | "done">
+  : T extends "message_error"
+    ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "done" | "error">
+    : T extends "start_signal"
+      ? Pick<MsgFromWorkerBasic<T>, "type" | "id">
+      : T extends "create_proxy"
+        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyId">
+        : never;
+
+//#endregion
+
+//#region - StructuredCloneable 相关
 
 type TypedArray =
   | Int8Array
@@ -26,6 +63,7 @@ type StructuredCloneableError =
   | TypeError
   | URIError;
 
+// StructuredCloneable 可以接受一个泛型参数以扩展类型
 export type StructuredCloneable<T = never> =
   | Exclude<Primitive, symbol>
   | { [k: string | number]: StructuredCloneable<T> }
@@ -44,7 +82,7 @@ export type StructuredCloneable<T = never> =
 
 //#endregion
 
-//#region - 从 MessageData 中获取 Transferable
+//#region - MessageData 相关
 
 export type MessageData = StructuredCloneable<Transferable>;
 
@@ -114,9 +152,10 @@ type Prev<N extends number | null> = N extends 1
                   : N extends 10
                     ? 9
                     : never;
+
 //#endregion
 
-//#region  - actions 中的各种类型
+//#region  - action 相关
 
 export type ActionResult<
   D extends MessageData | void = void,
@@ -138,37 +177,6 @@ export type CommonActions = {
   ) => ActionResult<MessageData | void>;
 };
 
-type MsgFromWorkerType =
-  | "action_data"
-  | "start_signal"
-  | "message_error"
-  | "create_proxy";
-
-type MsgFromWorkerBasic<
-  T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = MessageData,
-> = {
-  type: T;
-  data: D;
-  id: number;
-  done: boolean;
-  error: any;
-  proxyId: number;
-};
-
-export type MsgFromWorker<
-  T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = MessageData,
-> = T extends "action_data"
-  ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "id" | "done">
-  : T extends "message_error"
-    ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "done" | "error">
-    : T extends "start_signal"
-      ? Pick<MsgFromWorkerBasic<T>, "type" | "id">
-      : T extends "create_proxy"
-        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyId">
-        : never;
-
 export type ActionWithThis<
   A extends CommonActions,
   D extends true | any = true,
@@ -178,10 +186,6 @@ export type ActionWithThis<
     ...args: Parameters<A[K]>
   ) => ReturnType<A[K]>;
 };
-
-//#endregion
-
-//#region - onmessage
 
 type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
   ? (data?: undefined, transfer?: []) => void
@@ -199,6 +203,12 @@ type ActionThis<
   $post: PostMsgWithId<D>;
   $end: PostMsgWithId<D>;
 } & ActionWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
+
+//#endregion
+
+//#endregion
+
+//#region - onmessage
 
 //#region - _postMessage
 

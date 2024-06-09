@@ -6,10 +6,91 @@ import {
   Transfer,
 } from "./worker";
 
+//#region - types
+
+//#region - message 相关
+
+type MsgToWorkerType = "execute_action";
+
+type MsgToWorkerBasic<
+  T extends MsgToWorkerType = MsgToWorkerType,
+  A extends CommonActions = CommonActions,
+  K extends keyof A = keyof A,
+> = {
+  type: T;
+  actionName: K;
+  payload: Parameters<A[K]>;
+  id: number;
+};
+
+export type MsgToWorker<
+  T extends MsgToWorkerType = MsgToWorkerType,
+  A extends CommonActions = CommonActions,
+  K extends keyof A = keyof A,
+> = T extends "execute_action"
+  ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
+  : never;
+
+// MsgData 是传递给 messageSource 的数据
 export interface MsgData<A extends CommonActions, D> {
   readonly actionName: keyof A;
   readonly data: D;
 }
+
+//#endregion
+
+export type GetDataType<A extends CommonActions, K extends keyof A> =
+  ReturnType<A[K]> extends ActionResult<infer D>
+    ? Exclude<D, void> extends never
+      ? undefined
+      : Exclude<D, void>
+    : MessageData;
+
+type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
+  transfer: Transfer<D>;
+  timeout?: number;
+};
+
+type ListenerMap = {
+  message?: (e: MessageEvent<any>) => any;
+  messageerror?: (e: MessageEvent<any>) => any;
+  error?: (e: ErrorEvent) => any;
+};
+
+interface ExtendedMessageEvent<A extends CommonActions, D>
+  extends MessageEvent<D>,
+    MsgData<A, D> {}
+
+interface MessageSource<D, A extends CommonActions>
+  extends Omit<
+    MessagePort,
+    "addEventListener" | "onmessage" | "onmessageerror"
+  > {
+  promise: Promise<MsgData<A, D>>;
+  readonly readyState: ReadyState["current"];
+  onmessage:
+    | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
+    | null;
+  onmessageerror:
+    | ((this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any)
+    | null;
+  addEventListener(
+    type: "message",
+    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any,
+    options?: boolean | AddEventListenerOptions
+  ): MessageSource<D, A>;
+  addEventListener(
+    type: "messageerror",
+    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any,
+    options?: boolean | AddEventListenerOptions
+  ): MessageSource<D, A>;
+}
+
+type ReadyState = { current: 0 | 1 | 2 };
+
+//#endregion
+
+//#region - WorkerHandler
 
 export class WorkerHandler<A extends CommonActions> {
   private worker: Worker;
@@ -441,72 +522,4 @@ export class WorkerHandler<A extends CommonActions> {
   }
 }
 
-export type GetDataType<A extends CommonActions, K extends keyof A> =
-  ReturnType<A[K]> extends ActionResult<infer D>
-    ? Exclude<D, void> extends never
-      ? undefined
-      : Exclude<D, void>
-    : MessageData;
-
-type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
-  transfer: Transfer<D>;
-  timeout?: number;
-};
-
-type ListenerMap = {
-  message?: (e: MessageEvent<any>) => any;
-  messageerror?: (e: MessageEvent<any>) => any;
-  error?: (e: ErrorEvent) => any;
-};
-
-interface ExtendedMessageEvent<A extends CommonActions, D>
-  extends MessageEvent<D>,
-    MsgData<A, D> {}
-
-interface MessageSource<D, A extends CommonActions>
-  extends Omit<
-    MessagePort,
-    "addEventListener" | "onmessage" | "onmessageerror"
-  > {
-  promise: Promise<MsgData<A, D>>;
-  readonly readyState: ReadyState["current"];
-  onmessage:
-    | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
-    | null;
-  onmessageerror:
-    | ((this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any)
-    | null;
-  addEventListener(
-    type: "message",
-    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any,
-    options?: boolean | AddEventListenerOptions
-  ): MessageSource<D, A>;
-  addEventListener(
-    type: "messageerror",
-    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any,
-    options?: boolean | AddEventListenerOptions
-  ): MessageSource<D, A>;
-}
-
-type ReadyState = { current: 0 | 1 | 2 };
-
-type MsgToWorkerType = "execute_action";
-
-type MsgToWorkerBasic<
-  T extends MsgToWorkerType = MsgToWorkerType,
-  A extends CommonActions = CommonActions,
-  K extends keyof A = keyof A,
-> = {
-  type: T;
-  actionName: K;
-  payload: Parameters<A[K]>;
-  id: number;
-};
-
-export type MsgToWorker<
-  T extends MsgToWorkerType = MsgToWorkerType,
-  A extends CommonActions = CommonActions,
-  K extends keyof A = keyof A,
-> = T extends "execute_action"
-  ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
-  : never;
+//#endregion
