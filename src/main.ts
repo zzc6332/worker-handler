@@ -4,13 +4,13 @@ import {
   ActionResult,
   MessageData,
   Transfer,
-} from "./worker";
+} from "./worker.js";
 
 //#region - types
 
 //#region - message 相关
 
-type MsgToWorkerType = "execute_action";
+type MsgToWorkerType = "execute_action" | "handle_proxy";
 
 type MsgToWorkerBasic<
   T extends MsgToWorkerType = MsgToWorkerType,
@@ -21,6 +21,11 @@ type MsgToWorkerBasic<
   actionName: K;
   payload: Parameters<A[K]>;
   id: number;
+  trap: keyof ProxyHandler<any>;
+  getterId?: number;
+  property?: string | number | (string | number)[];
+  value?: any;
+  proxyId: number;
 };
 
 export type MsgToWorker<
@@ -29,13 +34,26 @@ export type MsgToWorker<
   K extends keyof A = keyof A,
 > = T extends "execute_action"
   ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
-  : never;
+  : T extends "handle_proxy"
+    ? Pick<
+        MsgToWorkerBasic<T>,
+        "type" | "proxyId" | "trap" | "property" | "value" | "getterId"
+      >
+    : never;
 
 // MsgData 是传递给 messageSource 的数据
-export interface MsgData<A extends CommonActions, D> {
+type MsgData<
+  A extends CommonActions,
+  D,
+  T extends "message" | "proxy" = "message" | "proxy",
+> = {
   readonly actionName: keyof A;
-  readonly data: D;
-}
+  readonly isProxy: T extends "proxy" ? true : false;
+} & (T extends "message"
+  ? { readonly data: D }
+  : T extends "proxy"
+    ? { readonly proxyId: number }
+    : never);
 
 //#endregion
 
@@ -59,7 +77,7 @@ type ListenerMap = {
 
 interface ExtendedMessageEvent<A extends CommonActions, D>
   extends MessageEvent<D>,
-    MsgData<A, D> {}
+    MsgData<A, D, "message"> {}
 
 interface MessageSource<D, A extends CommonActions>
   extends Omit<
@@ -129,6 +147,10 @@ export class WorkerHandler<A extends CommonActions> {
     this.handleListeners(initialListenerMap);
   }
 
+  //#region - this.handleListeners ！！ 处理消息的核心
+
+  // 使用 this.handleListeners 添加或移除事件监听器，监听 message 事件时，接收从 Worker 传来的 MsgFromWorker 类型的消息，根据不同消息标识来分别处理
+
   /**
    * 用于批量管理（添加或移除）事件监听器
    * @param listenerMap 要管理的事件类型和事件回调的映射关系
@@ -163,6 +185,8 @@ export class WorkerHandler<A extends CommonActions> {
       }
     }
   }
+
+  //#endregion
 
   get instance() {
     return this.worker;
@@ -258,28 +282,41 @@ export class WorkerHandler<A extends CommonActions> {
 
     this.handleListeners(startSignalListenerMap);
 
-    const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
-      if (e.data.type === "action_data" && e.data.id === id && !e.data.done) {
-        const data: MsgData<A, D> = { data: e.data.data, actionName };
-        sendPort.postMessage(data);
-      }
+    const msgListenerMap: ListenerMap = {
+      message: (
+        e: MessageEvent<MsgFromWorker<"action_data" | "port_proxy", D>>
+      ) => {
+        if (e.data.done || e.data.id !== id) return;
+        if (e.data.type === "action_data") {
+          const msgData: MsgData<A, D, "message"> = {
+            data: e.data.data,
+            actionName,
+            isProxy: false,
+          };
+          sendPort.postMessage(msgData);
+        } else if (e.data.type === "port_proxy") {
+          const msgData: MsgData<A, D, "proxy"> = {
+            actionName,
+            isProxy: true,
+            proxyId: e.data.proxyId,
+          };
+          sendPort.postMessage(msgData);
+        }
+      },
+      messageerror: (e: MessageEvent<MsgFromWorker<"message_error">>) => {
+        if (e.data.id === id && !e.data.done) {
+          receivePort.dispatchEvent(
+            new MessageEvent("messageerror", {
+              data: { actionName, error: e.data.error },
+            })
+          );
+        }
+      },
     };
 
-    const messageerror = (e: MessageEvent<MsgFromWorker<"message_error">>) => {
-      if (e.data.id === id && !e.data.done) {
-        receivePort.dispatchEvent(
-          new MessageEvent("messageerror", {
-            data: { actionName, error: e.data.error },
-          })
-        );
-      }
-    };
+    this.handleListeners(msgListenerMap);
 
-    const listenerMap = { message, messageerror };
-
-    this.handleListeners(listenerMap);
-
-    return [receivePort, listenerMap, messageChannel] as [
+    return [receivePort, msgListenerMap, messageChannel] as [
       MessagePort,
       ListenerMap,
       MessageChannel,
@@ -315,7 +352,7 @@ export class WorkerHandler<A extends CommonActions> {
       const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
         if (e.data.type === "action_data" && e.data.id === id && e.data.done) {
           const data = e.data.data as D;
-          const result: MsgData<A, D> = { actionName, data };
+          const result: MsgData<A, D> = { actionName, data, isProxy: false };
           resolve(result);
         }
       };
@@ -374,16 +411,124 @@ export class WorkerHandler<A extends CommonActions> {
     ) => any,
     receivePort: MessagePort
   ) {
-    return (ev: MessageEvent<any>) => {
+    return (ev: MessageEvent<MsgData<A, any>>) => {
       const extendedEventTmp: any = {};
       for (const p in ev) {
         let item = ev[p as keyof typeof ev];
         if (typeof item === "function") item = item.bind(ev);
         extendedEventTmp[p] = item;
       }
-      const extendedEvent = { ...extendedEventTmp, ...ev.data };
+      let extendedEvent: any;
+      if (ev.data.isProxy) {
+        const msgData = ev.data as MsgData<A, any, "proxy">;
+        const data = this.createProxy(msgData.proxyId);
+        extendedEvent = { ...extendedEventTmp, ...msgData, data };
+      } else {
+        const msgData = ev.data as MsgData<A, any, "message">;
+        extendedEvent = { ...extendedEventTmp, ...msgData };
+      }
       extendedListener.call(receivePort, extendedEvent);
     };
+  }
+
+  private handleProxy(handleProxyMsg: MsgToWorker<"handle_proxy">) {
+    const promise = new Promise((resolve) => {
+      this.worker.postMessage(handleProxyMsg);
+      const handleProxylistenerMap: ListenerMap = {
+        message: (e: MessageEvent<MsgFromWorker>) => {
+          if (
+            e.data.type === "proxy_data" &&
+            e.data.proxyId === handleProxyMsg.proxyId &&
+            e.data.getterId === handleProxyMsg.getterId
+          ) {
+            resolve(e.data.data);
+            this.handleListeners(handleProxylistenerMap, false);
+          } else if (
+            e.data.type === "create_subproxy" &&
+            e.data.parentProxyId === handleProxyMsg.proxyId &&
+            e.data.getterId === handleProxyMsg.getterId
+          ) {
+            resolve(this.createProxy(e.data.proxyId));
+          }
+        },
+      };
+      this.handleListeners(handleProxylistenerMap);
+    });
+
+    return this.createProxy(
+      handleProxyMsg.proxyId,
+      // { p: promise, pa: handleProxyMsg.property },
+      promise,
+      handleProxyMsg.property!
+    );
+    // return promise;
+  }
+
+  // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
+  private proxyGetterId = 0;
+
+  /**
+   * 收到 worker 传来的带有 port_proxy 标识的消息后，为 worker 中的对应目标创建一个 proxy
+   * @returns
+   */
+  private createProxy(
+    proxyId: number,
+    target = {},
+    parentProperty: string | number | (string | number)[] | null = null
+  ) {
+    const _this = this;
+
+    const handler: ProxyHandler<any> = {
+      get(target, property, receiver) {
+        if (property in target) {
+          const value = target[property];
+          if (typeof value === "function") {
+            return value.bind(target);
+          } else {
+            return value;
+          }
+        }
+
+        if (typeof property === "symbol") return receiver[property];
+
+        let propertyValue: string | number | (string | number)[];
+
+        if (parentProperty) {
+          const parentPropertyArray = Array.isArray(parentProperty)
+            ? parentProperty
+            : [parentProperty];
+          if (Array.isArray(property)) {
+            propertyValue = [...parentPropertyArray, ...property];
+          } else {
+            propertyValue = [...parentPropertyArray, property];
+          }
+        } else {
+          propertyValue = property;
+        }
+        return _this.handleProxy({
+          type: "handle_proxy",
+          trap: "get",
+          proxyId,
+          property: propertyValue,
+          getterId: _this.proxyGetterId++,
+        });
+      },
+      // set() {},
+      // has() {},
+      // apply() {},
+      // construct() {},
+      // defineProperty() {},
+      // deleteProperty() {},
+      // getOwnPropertyDescriptor() {},
+      // getPrototypeOf() {},
+      // setPrototypeOf(){}
+      // isExtensible() {},
+      // ownKeys() {},
+      // preventExtensions(){},
+    };
+    const { proxy, revoke } = Proxy.revocable(target, handler);
+
+    return proxy;
   }
 
   /**
