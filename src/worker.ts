@@ -8,7 +8,9 @@ type MsgFromWorkerType =
   | "action_data"
   | "start_signal"
   | "message_error"
-  | "create_proxy";
+  | "port_proxy"
+  | "proxy_data"
+  | "create_subproxy";
 
 type MsgFromWorkerBasic<
   T extends MsgFromWorkerType = MsgFromWorkerType,
@@ -20,6 +22,8 @@ type MsgFromWorkerBasic<
   done: boolean;
   error: any;
   proxyId: number;
+  parentProxyId: number;
+  getterId: number;
 };
 
 export type MsgFromWorker<
@@ -31,9 +35,18 @@ export type MsgFromWorker<
     ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "done" | "error">
     : T extends "start_signal"
       ? Pick<MsgFromWorkerBasic<T>, "type" | "id">
-      : T extends "create_proxy"
-        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyId">
-        : never;
+      : T extends "port_proxy"
+        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyId" | "done">
+        : T extends "proxy_data"
+          ? Pick<MsgFromWorkerBasic<T>, "type" | "proxyId" | "getterId"> & {
+              data: any;
+            }
+          : T extends "create_subproxy"
+            ? Pick<
+                MsgFromWorkerBasic<T>,
+                "type" | "proxyId" | "parentProxyId" | "getterId"
+              >
+            : never;
 
 //#endregion
 
@@ -152,7 +165,6 @@ type Prev<N extends number | null> = N extends 1
                   : N extends 10
                     ? 9
                     : never;
-
 //#endregion
 
 //#region  - action 相关
@@ -210,14 +222,16 @@ type ActionThis<
 
 //#region - onmessage
 
-//#region - _postMessage
+//#region - postActionMessage
+
+let currentProxyId = 0;
 
 /**
  * 传递 Action 要发送的消息
  * @param message
  * @param options
  */
-function _postMessage(
+function postActionMessage(
   message: MsgFromWorker<"action_data">,
   options?: Transferable[] | StructuredSerializeOptions
 ) {
@@ -225,9 +239,29 @@ function _postMessage(
     if (Array.isArray(options)) {
       postMessage(message, options);
     } else {
-      postMessage(message, options);
+      postMessage(message, options?.transfer!);
     }
-  } catch (error) {
+  } catch (error: any) {
+    //#region - 处理当要传递的消息无法被结构化克隆时的情况
+    // 在支持 ES6 Proxy 的环境中，如果传递的数据无法被结构化克隆，可以在 Main 中创建一个 Proxy 来控制该数据
+    if (Proxy) {
+      const reg = /could not be cloned\.$/;
+      if (reg.test(error?.message)) {
+        const data: any = message.data;
+        const proxyMsg: MsgFromWorker<"port_proxy"> = {
+          type: "port_proxy",
+          id: message.id,
+          done: message.done,
+          proxyId: currentProxyId,
+        };
+        proxyTargets[currentProxyId] = data;
+        currentProxyId++;
+        postMessage(proxyMsg);
+        return;
+      }
+    }
+    //#endregion
+
     const { id, done } = message;
     const errorMsg: MsgFromWorker<"message_error"> = {
       id,
@@ -242,14 +276,16 @@ function _postMessage(
 
 //#endregion
 
-//#region - createOnmessage
+//#region - createOnmessage ！！处理消息的核心
 
+// worker 中处理消息的核心是 createOnmessage，接收从 Main 传来的 MsgToWorker 类型的消息，根据不同的消息标识来分别处理
 export function createOnmessage<A extends CommonActions>(
   actions: ActionWithThis<A>
 ) {
   return async (ev: MessageEvent<MsgToWorker>) => {
     const { type } = ev.data;
 
+    //#region - execute_action
     if (type === "execute_action") {
       const e = ev as MessageEvent<MsgToWorker<"execute_action", A>>;
       const { actionName, payload, id } = e.data;
@@ -271,7 +307,7 @@ export function createOnmessage<A extends CommonActions>(
           done,
           type: "action_data",
         };
-        _postMessage(msgFromWorker, transfer);
+        postActionMessage(msgFromWorker, transfer);
       };
 
       const postResultWithId: PostMsgWithId = (
@@ -295,7 +331,7 @@ export function createOnmessage<A extends CommonActions>(
             done,
             type: "action_data",
           };
-          _postMessage(resultFromWorker, transfer);
+          postActionMessage(resultFromWorker, transfer);
         });
       };
 
@@ -336,7 +372,7 @@ export function createOnmessage<A extends CommonActions>(
             done,
             type: "action_data",
           };
-          _postMessage(resultFromWorker, transfer);
+          postActionMessage(resultFromWorker, transfer);
         }
       } catch (error: any) {
         if (
@@ -349,10 +385,53 @@ export function createOnmessage<A extends CommonActions>(
           throw error;
         }
       }
+      //#endregion
+
+      //#region - handle_proxy
+    } else if (type === "handle_proxy") {
+      const e = ev as MessageEvent<MsgToWorker<"handle_proxy", A>>;
+      const { trap, proxyId } = e.data;
+      if (trap === "get") {
+        const { property, getterId } = e.data;
+        let data: any;
+        if (!Array.isArray(property)) {
+          data = proxyTargets[proxyId][property!];
+        } else {
+          data = property.reduce((preV, cur) => {
+            return preV[cur];
+          }, proxyTargets[proxyId]);
+        }
+        const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
+          type: "proxy_data",
+          proxyId,
+          data,
+          getterId: getterId!,
+        };
+
+        try {
+          postMessage(proxyDataMsg);
+        } catch (error: any) {
+          // 如果读取到的数据无法被实例化，则继续创建 proxy
+          const reg = /could not be cloned\.$/;
+          if (!reg.test(error?.message)) return;
+          const createSubproxyMsg: MsgFromWorker<"create_subproxy"> = {
+            type: "create_subproxy",
+            proxyId: currentProxyId,
+            parentProxyId: proxyId,
+            getterId: getterId!,
+          };
+          proxyTargets[currentProxyId] = data;
+          currentProxyId++;
+          postMessage(createSubproxyMsg);
+        }
+      }
     }
+    //#endregion
   };
 }
 
 //#endregion
 
 //#endregion
+
+const proxyTargets: any[] = [];
