@@ -10,7 +10,7 @@ import {
 
 //#region - message 相关
 
-type MsgToWorkerType = "execute_action" | "handle_proxy";
+type MsgToWorkerType = "execute_action" | "handle_proxy" | "revoke_proxy";
 
 type MsgToWorkerBasic<
   T extends MsgToWorkerType = MsgToWorkerType,
@@ -25,7 +25,7 @@ type MsgToWorkerBasic<
   getterId?: number;
   property?: string | number | (string | number)[];
   value?: any;
-  proxyId: number;
+  proxyTargetId: number;
 };
 
 export type MsgToWorker<
@@ -37,9 +37,11 @@ export type MsgToWorker<
   : T extends "handle_proxy"
     ? Pick<
         MsgToWorkerBasic<T>,
-        "type" | "proxyId" | "trap" | "property" | "value" | "getterId"
+        "type" | "proxyTargetId" | "trap" | "property" | "value" | "getterId"
       >
-    : never;
+    : T extends "revoke_proxy"
+      ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId">
+      : never;
 
 // MsgData 是传递给 messageSource 的数据
 type MsgData<
@@ -52,7 +54,7 @@ type MsgData<
 } & (T extends "message"
   ? { readonly data: D }
   : T extends "proxy"
-    ? { readonly proxyId: number }
+    ? { readonly proxyTargetId: number }
     : never);
 
 //#endregion
@@ -298,7 +300,7 @@ export class WorkerHandler<A extends CommonActions> {
           const msgData: MsgData<A, D, "proxy"> = {
             actionName,
             isProxy: true,
-            proxyId: e.data.proxyId,
+            proxyTargetId: e.data.proxyTargetId,
           };
           sendPort.postMessage(msgData);
         }
@@ -384,14 +386,12 @@ export class WorkerHandler<A extends CommonActions> {
       readyState.current = 2;
     };
 
+    // 之所以要在 then() 和 catch() 的回调中中分别执行一次 clearEffects()，而不在 finally() 的回调中执行，是为了保证当用户在 promise 的 then() 或 catch() 的回调中访问到的 readyState.current 一定为 2，而 finally() 中的回调的执行晚于 then() 和 catch() 的回调的执行
     promise
       .then(() => {
         clearEffects();
       })
       .catch(() => {
-        clearEffects();
-      })
-      .finally(() => {
         clearEffects();
       });
 
@@ -421,7 +421,7 @@ export class WorkerHandler<A extends CommonActions> {
       let extendedEvent: any;
       if (ev.data.isProxy) {
         const msgData = ev.data as MsgData<A, any, "proxy">;
-        const data = this.createProxy(msgData.proxyId);
+        const data = this.createProxy(msgData.proxyTargetId);
         extendedEvent = { ...extendedEventTmp, ...msgData, data };
       } else {
         const msgData = ev.data as MsgData<A, any, "message">;
@@ -438,17 +438,17 @@ export class WorkerHandler<A extends CommonActions> {
         message: (e: MessageEvent<MsgFromWorker>) => {
           if (
             e.data.type === "proxy_data" &&
-            e.data.proxyId === handleProxyMsg.proxyId &&
+            e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
             e.data.getterId === handleProxyMsg.getterId
           ) {
             resolve(e.data.data);
             this.handleListeners(handleProxylistenerMap, false);
           } else if (
             e.data.type === "create_subproxy" &&
-            e.data.parentProxyId === handleProxyMsg.proxyId &&
+            e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
             e.data.getterId === handleProxyMsg.getterId
           ) {
-            resolve(this.createProxy(e.data.proxyId));
+            resolve(this.createProxy(e.data.proxyTargetId));
           }
         },
       };
@@ -456,8 +456,7 @@ export class WorkerHandler<A extends CommonActions> {
     });
 
     return this.createProxy(
-      handleProxyMsg.proxyId,
-      // { p: promise, pa: handleProxyMsg.property },
+      handleProxyMsg.proxyTargetId,
       promise,
       handleProxyMsg.property!
     );
@@ -467,12 +466,21 @@ export class WorkerHandler<A extends CommonActions> {
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
   private proxyGetterId = 0;
 
+  // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
+  private proxyWeakMap = new WeakMap<
+    any,
+    { proxyTargetId: number; revoke: () => void }
+  >();
+
   /**
-   * 收到 worker 传来的带有 port_proxy 标识的消息后，为 worker 中的对应目标创建一个 proxy
+   * 收到 worker 传来的带有 port_proxy 或 create_subproxy 标识的消息后，为 Worker 中的对应目标创建一个 proxy
+   * @param proxyTargetId Worker 中定义的 proxy 目标的唯一标识符
+   * @param target proxy 在 Main 中也可以指定一个 target，为该 proxy 添加一些在 Main 中的额外功能
+   * @param parentProperty 接收一个包含一系列属性名的数组，当使用 get 捕捉器时，会将 property 放入该数组末尾，并根据该数组中的属性名依次嵌套获取 Worker 中的目标的嵌套属性
    * @returns
    */
   private createProxy(
-    proxyId: number,
+    proxyTargetId: number,
     target = {},
     parentProperty: string | number | (string | number)[] | null = null
   ) {
@@ -508,7 +516,7 @@ export class WorkerHandler<A extends CommonActions> {
         return _this.handleProxy({
           type: "handle_proxy",
           trap: "get",
-          proxyId,
+          proxyTargetId,
           property: propertyValue,
           getterId: _this.proxyGetterId++,
         });
@@ -528,7 +536,23 @@ export class WorkerHandler<A extends CommonActions> {
     };
     const { proxy, revoke } = Proxy.revocable(target, handler);
 
+    this.proxyWeakMap.set(proxy, {
+      proxyTargetId,
+      revoke,
+    });
+
     return proxy;
+  }
+
+  revokeProxy(proxy: any) {
+    const proxyItem = this.proxyWeakMap.get(proxy);
+    if (!proxyItem) return;
+    proxyItem.revoke();
+    const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
+      type: "revoke_proxy",
+      proxyTargetId: proxyItem.proxyTargetId,
+    };
+    this.worker.postMessage(revokeProxyMsg);
   }
 
   /**
