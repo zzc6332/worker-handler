@@ -408,20 +408,23 @@ export function createOnmessage<A extends CommonActions>(
       const e = ev as MessageEvent<MsgToWorker<"handle_proxy">>;
       const { trap, proxyTargetId } = e.data;
 
-      if (trap === "get") {
-        const { property, getterId } = e.data;
-        let data: any;
+      function getProxyTreeNode(proxyTargetId: number) {
         const proxyTreeNode = proxyTreeNodes[proxyTargetId];
         if (proxyTreeNode === null) {
           throw new Error("Proxy has been revoked.");
         }
+        return proxyTreeNode;
+      }
+
+      if (trap === "get") {
+        const { property, getterId } = e.data;
+        let data: any;
+        const proxyTreeNode = getProxyTreeNode(proxyTargetId);
         const { target } = proxyTreeNode.value;
         if (!Array.isArray(property)) {
           data = target[property!];
         } else {
-          data = property.reduce((preV, cur) => {
-            return preV[cur];
-          }, target);
+          data = property.reduce((preV, cur) => preV[cur], target);
         }
         const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
           type: "proxy_data",
@@ -442,18 +445,26 @@ export function createOnmessage<A extends CommonActions>(
             parentProxyTargetId: proxyTargetId,
             getterId: getterId!,
           };
-
-          const parentTreeNode = proxyTreeNodes[proxyTargetId];
-          if (parentTreeNode === null) {
-            throw new Error("Proxy has been revoked.");
-          }
-          const treeNode = parentTreeNode.addChild({
+          const parentProxyTreeNode = proxyTreeNode;
+          const childProxyTreeNode = parentProxyTreeNode.addChild({
             target: data,
             proxyTargetId: currentProxyTargetId,
           });
-          proxyTreeNodes[currentProxyTargetId] = treeNode;
+          proxyTreeNodes[currentProxyTargetId] = childProxyTreeNode;
           currentProxyTargetId++;
           postMessage(createSubproxyMsg);
+        }
+      } else if (trap === "set") {
+        const { property, value } = e.data;
+        const proxyTreeNode = getProxyTreeNode(proxyTargetId);
+        const { target } = proxyTreeNode.value;
+        if (!Array.isArray(property)) {
+          Reflect.set(target, property, value);
+        } else {
+          const _target = property
+            .slice(0, -1)
+            .reduce((prev, cur) => prev[cur], target);
+          Reflect.set(_target, property[property.length - 1], value);
         }
       }
     } else if (type === "revoke_proxy") {
