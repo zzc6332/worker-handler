@@ -10,38 +10,53 @@ import {
 
 //#region - message 相关
 
-type MsgToWorkerType = "execute_action" | "handle_proxy" | "revoke_proxy";
+type MsgToWorkerType =
+  | "execute_action"
+  | "handle_proxy"
+  | "revoke_proxy"
+  | "check_clonability";
 
 type MsgToWorkerBasic<
   T extends MsgToWorkerType = MsgToWorkerType,
   A extends CommonActions = CommonActions,
   K extends keyof A = keyof A,
+  P extends keyof ProxyHandler<any> = keyof ProxyHandler<any>,
 > = {
   type: T;
   actionName: K;
   payload: Parameters<A[K]>;
   id: number;
-  trap: keyof ProxyHandler<any>;
-  getterId?: number;
-  property?: string | number | (string | number)[];
-  value?: any;
+  trap: P;
   proxyTargetId: number;
+  getterId: number;
+  property: keyof any | (keyof any)[];
+  value: any;
 };
 
 export type MsgToWorker<
   T extends MsgToWorkerType = MsgToWorkerType,
   A extends CommonActions = CommonActions,
   K extends keyof A = keyof A,
+  P extends keyof ProxyHandler<any> = keyof ProxyHandler<any>,
 > = T extends "execute_action"
   ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
   : T extends "handle_proxy"
-    ? Pick<
-        MsgToWorkerBasic<T>,
-        "type" | "proxyTargetId" | "trap" | "property" | "value" | "getterId"
-      >
+    ? P extends "get"
+      ? Pick<
+          MsgToWorkerBasic<T, A, K, P>,
+          "type" | "proxyTargetId" | "trap" | "getterId" | "property"
+        >
+      : P extends "set"
+        ? Pick<
+            MsgToWorkerBasic<T, A, K, P>,
+            "type" | "proxyTargetId" | "trap" | "property" | "value"
+          >
+        : never
     : T extends "revoke_proxy"
       ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId">
-      : never;
+      : T extends "check_clonability"
+        ? Pick<MsgToWorkerBasic<T>, "type" | "value">
+        : never;
 
 // MsgData 是传递给 messageSource 的数据
 type MsgData<
@@ -432,35 +447,36 @@ export class WorkerHandler<A extends CommonActions> {
   }
 
   private handleProxy(handleProxyMsg: MsgToWorker<"handle_proxy">) {
-    const promise = new Promise((resolve) => {
-      this.worker.postMessage(handleProxyMsg);
-      const handleProxylistenerMap: ListenerMap = {
-        message: (e: MessageEvent<MsgFromWorker>) => {
-          if (
-            e.data.type === "proxy_data" &&
-            e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
-            e.data.getterId === handleProxyMsg.getterId
-          ) {
-            resolve(e.data.data);
-            this.handleListeners(handleProxylistenerMap, false);
-          } else if (
-            e.data.type === "create_subproxy" &&
-            e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
-            e.data.getterId === handleProxyMsg.getterId
-          ) {
-            resolve(this.createProxy(e.data.proxyTargetId));
-          }
-        },
-      };
-      this.handleListeners(handleProxylistenerMap);
-    });
+    this.worker.postMessage(handleProxyMsg);
+    if (handleProxyMsg.trap === "get") {
+      const promise = new Promise((resolve) => {
+        const handleProxylistenerMap: ListenerMap = {
+          message: (e: MessageEvent<MsgFromWorker>) => {
+            if (
+              e.data.type === "proxy_data" &&
+              e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
+              e.data.getterId === handleProxyMsg.getterId
+            ) {
+              resolve(e.data.data);
+              this.handleListeners(handleProxylistenerMap, false);
+            } else if (
+              e.data.type === "create_subproxy" &&
+              e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
+              e.data.getterId === handleProxyMsg.getterId
+            ) {
+              resolve(this.createProxy(e.data.proxyTargetId));
+            }
+          },
+        };
+        this.handleListeners(handleProxylistenerMap);
+      });
 
-    return this.createProxy(
-      handleProxyMsg.proxyTargetId,
-      promise,
-      handleProxyMsg.property!
-    );
-    // return promise;
+      return this.createProxy(
+        handleProxyMsg.proxyTargetId,
+        promise,
+        handleProxyMsg.property!
+      );
+    }
   }
 
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
@@ -482,7 +498,7 @@ export class WorkerHandler<A extends CommonActions> {
   private createProxy(
     proxyTargetId: number,
     target = {},
-    parentProperty: string | number | (string | number)[] | null = null
+    parentProperty: keyof any | (keyof any)[] | null = null
   ) {
     const _this = this;
 
@@ -499,7 +515,7 @@ export class WorkerHandler<A extends CommonActions> {
 
         if (typeof property === "symbol") return receiver[property];
 
-        let propertyValue: string | number | (string | number)[];
+        let propertyValue: keyof any | (keyof any)[];
 
         if (parentProperty) {
           const parentPropertyArray = Array.isArray(parentProperty)
@@ -521,7 +537,48 @@ export class WorkerHandler<A extends CommonActions> {
           getterId: _this.proxyGetterId++,
         });
       },
-      // set() {},
+
+      set(target, property, value) {
+        if (property in target) {
+          return Reflect.set(target, property, value);
+        }
+
+        const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
+          type: "check_clonability",
+          value,
+        };
+        try {
+          _this.worker.postMessage(checkClonabilityMsg);
+        } catch (error) {
+          return false;
+        }
+
+        let propertyValue: keyof any | (keyof any)[];
+
+        if (parentProperty) {
+          const parentPropertyArray = Array.isArray(parentProperty)
+            ? parentProperty
+            : [parentProperty];
+          if (Array.isArray(property)) {
+            propertyValue = [...parentPropertyArray, ...property];
+          } else {
+            propertyValue = [...parentPropertyArray, property];
+          }
+        } else {
+          propertyValue = property;
+        }
+
+        _this.handleProxy({
+          type: "handle_proxy",
+          trap: "set",
+          proxyTargetId,
+          property: propertyValue,
+          value,
+        });
+
+        return true;
+      },
+
       // has() {},
       // apply() {},
       // construct() {},
