@@ -6,7 +6,8 @@
       "ESNext",
       "WebWorker",
       "WebWorker.ImportScripts",
-      "Webworker.Iterable"
+      "Webworker.Iterable",
+      "DOM"
     ],
     "moduleResolution": "Node",
     "noImplicitAny": true,
