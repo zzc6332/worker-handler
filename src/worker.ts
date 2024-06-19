@@ -1,4 +1,4 @@
-import { GetDataType, MsgToWorker } from "./main";
+import { GetDataType, MsgToWorker, ProxyContext } from "./main";
 
 import { TreeNode } from "./data-structure";
 
@@ -20,7 +20,7 @@ type MsgFromWorkerBasic<
 > = {
   type: T;
   data: D;
-  id: number;
+  executionId: number;
   done: boolean;
   error: any;
   proxyTargetId: number;
@@ -32,13 +32,16 @@ export type MsgFromWorker<
   T extends MsgFromWorkerType = MsgFromWorkerType,
   D = MessageData,
 > = T extends "action_data"
-  ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "id" | "done">
+  ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "executionId" | "done">
   : T extends "message_error"
-    ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "done" | "error">
+    ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId" | "done" | "error">
     : T extends "start_signal"
-      ? Pick<MsgFromWorkerBasic<T>, "type" | "id">
+      ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId">
       : T extends "port_proxy"
-        ? Pick<MsgFromWorkerBasic<T>, "type" | "id" | "proxyTargetId" | "done">
+        ? Pick<
+            MsgFromWorkerBasic<T>,
+            "type" | "executionId" | "proxyTargetId" | "done"
+          >
         : T extends "proxy_data"
           ? Pick<
               MsgFromWorkerBasic<T>,
@@ -227,15 +230,17 @@ type ActionThis<
 
 //#region - onmessage
 
-//#region - postActionMessage
+//#region - 相关变量与工具函数
 
 let currentProxyTargetId = 0;
 
-// proxyTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
-const proxyTreeNodes: (TreeNode<{
+// proxyTargetTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
+const proxyTargetTreeNodes: (TreeNode<{
   target: any;
   proxyTargetId: number;
 }> | null)[] = [];
+
+//#region - postActionMessage
 
 /**
  * 传递 Action 要发送的消息
@@ -261,12 +266,12 @@ function postActionMessage(
         const data: any = message.data;
         const proxyMsg: MsgFromWorker<"port_proxy"> = {
           type: "port_proxy",
-          id: message.id,
+          executionId: message.executionId,
           done: message.done,
           proxyTargetId: currentProxyTargetId,
         };
 
-        proxyTreeNodes[currentProxyTargetId] = new TreeNode({
+        proxyTargetTreeNodes[currentProxyTargetId] = new TreeNode({
           target: data,
           proxyTargetId: currentProxyTargetId,
         });
@@ -278,9 +283,9 @@ function postActionMessage(
     }
     //#endregion
 
-    const { id, done } = message;
+    const { executionId, done } = message;
     const errorMsg: MsgFromWorker<"message_error"> = {
-      id,
+      executionId,
       done,
       type: "message_error",
       error,
@@ -289,6 +294,73 @@ function postActionMessage(
     postMessage(errorMsg);
   }
 }
+
+//#endregion
+
+//#region - handle_proxy 相关工具函数
+
+/**
+ * 根据对应的 proxyTargetId 获取对应的未废弃的 proxyTargetTreeNode
+ * @param proxyTargetId
+ * @returns proxyTargetTreeNode
+ */
+function getProxyTargetTreeNode(proxyTargetId: number) {
+  const proxyTargetTreeNode = proxyTargetTreeNodes[proxyTargetId];
+  if (proxyTargetTreeNode === null) {
+    throw new Error("Proxy has been revoked.");
+  }
+  return proxyTargetTreeNode;
+}
+
+/**
+ * 在响应来自 Main 的 handle_proxy 消息的一些操作时调用，用于将一些与 proxy 相关的数据传递给 Main
+ * @param proxyTargetId
+ * @param getterId
+ * @param data
+ * @param parentProxyTargetTreeNode
+ * @returns
+ */
+function postProxyData(
+  proxyTargetId: number,
+  getterId: number,
+  data: any,
+  parentProxyTargetTreeNode?: TreeNode<{
+    target: any;
+    proxyTargetId: number;
+  }>
+) {
+  const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
+    type: "proxy_data",
+    proxyTargetId,
+    data,
+    getterId: getterId!,
+  };
+  try {
+    postMessage(proxyDataMsg);
+  } catch (error: any) {
+    // 如果读取到的数据无法被实例化，则继续创建 proxy
+    const reg = /could not be cloned\.$/;
+    if (!reg.test(error?.message)) return;
+    const createSubproxyMsg: MsgFromWorker<"create_subproxy"> = {
+      type: "create_subproxy",
+      proxyTargetId: currentProxyTargetId,
+      parentProxyTargetId: proxyTargetId,
+      getterId: getterId!,
+    };
+    const proxyTargetTreeNodeValue = {
+      target: data,
+      proxyTargetId: currentProxyTargetId,
+    };
+    const proxyTargetTreeNode = parentProxyTargetTreeNode
+      ? parentProxyTargetTreeNode.addChild(proxyTargetTreeNodeValue)
+      : new TreeNode(proxyTargetTreeNodeValue);
+    proxyTargetTreeNodes[currentProxyTargetId] = proxyTargetTreeNode;
+    currentProxyTargetId++;
+    postMessage(createSubproxyMsg);
+  }
+}
+
+//#endregion
 
 //#endregion
 
@@ -302,12 +374,13 @@ export function createOnmessage<A extends CommonActions>(
     const { type } = ev.data;
 
     //#region - execute_action
+
     if (type === "execute_action") {
       const e = ev as MessageEvent<MsgToWorker<"execute_action", A>>;
-      const { actionName, payload, id } = e.data;
+      const { actionName, payload, executionId } = e.data;
 
       const startSignalMsg: MsgFromWorker<"start_signal"> = {
-        id,
+        executionId,
         type: "start_signal",
       };
       postMessage(startSignalMsg);
@@ -319,7 +392,7 @@ export function createOnmessage<A extends CommonActions>(
         const done = false;
         const msgFromWorker: MsgFromWorker<"action_data"> = {
           data,
-          id,
+          executionId,
           done,
           type: "action_data",
         };
@@ -343,7 +416,7 @@ export function createOnmessage<A extends CommonActions>(
           const done = true;
           const resultFromWorker: MsgFromWorker<"action_data"> = {
             data,
-            id,
+            executionId,
             done,
             type: "action_data",
           };
@@ -384,7 +457,7 @@ export function createOnmessage<A extends CommonActions>(
           const done = true;
           const resultFromWorker: MsgFromWorker<"action_data"> = {
             data,
-            id,
+            executionId,
             done,
             type: "action_data",
           };
@@ -401,6 +474,7 @@ export function createOnmessage<A extends CommonActions>(
           throw error;
         }
       }
+
       //#endregion
 
       //#region - handle_proxy
@@ -408,56 +482,26 @@ export function createOnmessage<A extends CommonActions>(
       const e = ev as MessageEvent<MsgToWorker<"handle_proxy">>;
       const { trap, proxyTargetId } = e.data;
 
-      function getProxyTreeNode(proxyTargetId: number) {
-        const proxyTreeNode = proxyTreeNodes[proxyTargetId];
-        if (proxyTreeNode === null) {
-          throw new Error("Proxy has been revoked.");
-        }
-        return proxyTreeNode;
-      }
-
+      //#region - get trap
       if (trap === "get") {
         const { property, getterId } = e.data;
         let data: any;
-        const proxyTreeNode = getProxyTreeNode(proxyTargetId);
-        const { target } = proxyTreeNode.value;
+        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+        const { target } = proxyTargetTreeNode.value;
         if (!Array.isArray(property)) {
           data = target[property!];
         } else {
           data = property.reduce((preV, cur) => preV[cur], target);
         }
-        const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
-          type: "proxy_data",
-          proxyTargetId,
-          data,
-          getterId: getterId!,
-        };
+        postProxyData(proxyTargetId, getterId, data, proxyTargetTreeNode);
 
-        try {
-          postMessage(proxyDataMsg);
-        } catch (error: any) {
-          // 如果读取到的数据无法被实例化，则继续创建 proxy
-          const reg = /could not be cloned\.$/;
-          if (!reg.test(error?.message)) return;
-          const createSubproxyMsg: MsgFromWorker<"create_subproxy"> = {
-            type: "create_subproxy",
-            proxyTargetId: currentProxyTargetId,
-            parentProxyTargetId: proxyTargetId,
-            getterId: getterId!,
-          };
-          const parentProxyTreeNode = proxyTreeNode;
-          const childProxyTreeNode = parentProxyTreeNode.addChild({
-            target: data,
-            proxyTargetId: currentProxyTargetId,
-          });
-          proxyTreeNodes[currentProxyTargetId] = childProxyTreeNode;
-          currentProxyTargetId++;
-          postMessage(createSubproxyMsg);
-        }
+        //#endregion
+
+        //#region - set trap
       } else if (trap === "set") {
         const { property, value } = e.data;
-        const proxyTreeNode = getProxyTreeNode(proxyTargetId);
-        const { target } = proxyTreeNode.value;
+        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+        const { target } = proxyTargetTreeNode.value;
         if (!Array.isArray(property)) {
           Reflect.set(target, property, value);
         } else {
@@ -466,18 +510,90 @@ export function createOnmessage<A extends CommonActions>(
             .reduce((prev, cur) => prev[cur], target);
           Reflect.set(_target, property[property.length - 1], value);
         }
+
+        //#endregion
+
+        //#region - apply trap
+      } else if (trap === "apply") {
+        const {
+          getterId,
+          parentProperty,
+          argumentList, // argumentList 中可以被结构化克隆的部分会在这里被接收
+          argProxyContexts, // argumentList 中如果存在元素是在 Main 中是已注册的 proxy，那么他们会以 ProxyContext 的形式传递到这里
+          thisProxyContext, // thisArg 如果在 Main 中是已注册的 proxy，那么会以 ProxyContext 的形式传递到这里
+          thisArg: _thisArg, // 如果 Main 中传递的 thisArg 可以被结构化克隆，则会在这里被接收到，否则这里的 thisArg 接收 undefined
+        } = e.data;
+
+        // 根据 proxyContext 获取对应的 target
+        function getTargetByProxyContext(proxyContext: ProxyContext) {
+          // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
+          const proxyTargetTreeNode = getProxyTargetTreeNode(
+            proxyContext.proxyTargetId
+          );
+          const rootProxyTarget = proxyTargetTreeNode.value.target;
+
+          // 将 thisProxyContext.parentProperty 整理为数组，用它获取到具体的 target
+          let { parentProperty } = proxyContext;
+          parentProperty = Array.isArray(parentProperty)
+            ? parentProperty
+            : parentProperty
+              ? [parentProperty]
+              : [];
+
+          return parentProperty.reduce(
+            (prev, cur) => prev[cur],
+            rootProxyTarget
+          );
+        }
+
+        //#region - 处理 thisArg
+
+        let thisArg: any = undefined;
+
+        // 如果 Main 中传递的 thisArg 是已注册的 proxy
+        if (thisProxyContext) {
+          thisArg = getTargetByProxyContext(thisProxyContext);
+        }
+        // 如果 Main 中传递的 thisArg 可以被结构化克隆
+        if (_thisArg) {
+          thisArg = _thisArg;
+        }
+
+        //#endregion
+
+        //#region - 处理 argumentList
+        const _argumentList = [...argumentList];
+        argProxyContexts.forEach((argProxyContext, index) => {
+          if (argProxyContext) {
+            _argumentList[index] = getTargetByProxyContext(argProxyContext);
+          }
+        });
+        //#endregion
+
+        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+        const { target } = proxyTargetTreeNode.value;
+        const fn = parentProperty.reduce((prev, cur) => prev[cur], target);
+        const result = fn.apply(thisArg, _argumentList);
+        postProxyData(proxyTargetId, getterId, result, proxyTargetTreeNode);
+
+        //#endregion
       }
+
+      //#endregion
+
+      //#region - revoke_proxy
     } else if (type === "revoke_proxy") {
-      // console.log("revoke 之前的 proxyTreeNodes： ", [...proxyTreeNodes]);
+      // console.log("revoke 之前的 proxyTargetTreeNodes： ", [...proxyTargetTreeNodes]);
       const e = ev as MessageEvent<MsgToWorker<"revoke_proxy">>;
-      const proxyTreeNode = proxyTreeNodes[e.data.proxyTargetId];
-      if (proxyTreeNode === null) return;
-      for (const subTreeNode of proxyTreeNode) {
-        // console.log("被 revoke 的 proxyTreeNode:", subTreeNode);
-        proxyTreeNodes[subTreeNode.value.proxyTargetId] = null;
+      const proxyTargetTreeNode = proxyTargetTreeNodes[e.data.proxyTargetId];
+      if (proxyTargetTreeNode === null) return;
+      for (const subTreeNode of proxyTargetTreeNode) {
+        // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+        proxyTargetTreeNodes[subTreeNode.value.proxyTargetId] = null;
       }
-      // console.log("revoke 之后的 proxyTreeNodes： ", proxyTreeNodes);
+      // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
     }
+
     //#endregion
   };
 }
