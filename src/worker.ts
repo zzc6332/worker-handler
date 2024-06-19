@@ -1,6 +1,7 @@
 import { GetDataType, MsgToWorker, ProxyContext } from "./main";
 
 import { TreeNode } from "./data-structure";
+import { judgeStructuredCloneable } from "./type-judge";
 
 //#region - types
 
@@ -252,6 +253,8 @@ function postActionMessage(
   options?: Transferable[] | StructuredSerializeOptions
 ) {
   try {
+    if (!judgeStructuredCloneable(message, { transferable: false }))
+      throw new Error("could not be cloned.");
     if (Array.isArray(options)) {
       postMessage(message, options);
     } else {
@@ -261,6 +264,7 @@ function postActionMessage(
     //#region - 处理当要传递的消息无法被结构化克隆时的情况
     // 在支持 ES6 Proxy 的环境中，如果传递的数据无法被结构化克隆，可以在 Main 中创建一个 Proxy 来控制该数据
     if (Proxy) {
+      // 无论是根据 judgeStructuredCloneable() 条件抛出的 Error 还是 postMessage() 抛出的 Error 的 message 都会被 reg 匹配到
       const reg = /could not be cloned\.$/;
       if (reg.test(error?.message)) {
         const data: any = message.data;
@@ -336,6 +340,8 @@ function postProxyData(
     getterId: getterId!,
   };
   try {
+    if (!judgeStructuredCloneable(proxyDataMsg, { transferable: false }))
+      throw new Error("could not be cloned.");
     postMessage(proxyDataMsg);
   } catch (error: any) {
     // 如果读取到的数据无法被实例化，则继续创建 proxy
