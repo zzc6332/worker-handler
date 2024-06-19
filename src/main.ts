@@ -16,6 +16,11 @@ type MsgToWorkerType =
   | "revoke_proxy"
   | "check_clonability";
 
+export type ProxyContext = {
+  proxyTargetId: number;
+  parentProperty: keyof any | (keyof any)[] | null;
+};
+
 type MsgToWorkerBasic<
   T extends MsgToWorkerType = MsgToWorkerType,
   A extends CommonActions = CommonActions,
@@ -25,12 +30,17 @@ type MsgToWorkerBasic<
   type: T;
   actionName: K;
   payload: Parameters<A[K]>;
-  id: number;
+  executionId: number;
   trap: P;
   proxyTargetId: number;
   getterId: number;
   property: keyof any | (keyof any)[];
   value: any;
+  argumentList: any[];
+  parentProperty: (keyof any)[];
+  argProxyContexts: (ProxyContext | undefined)[];
+  thisProxyContext?: ProxyContext;
+  thisArg?: any;
 };
 
 export type MsgToWorker<
@@ -39,7 +49,10 @@ export type MsgToWorker<
   K extends keyof A = keyof A,
   P extends keyof ProxyHandler<any> = keyof ProxyHandler<any>,
 > = T extends "execute_action"
-  ? Pick<MsgToWorkerBasic<T, A, K>, "type" | "actionName" | "payload" | "id">
+  ? Pick<
+      MsgToWorkerBasic<T, A, K>,
+      "type" | "actionName" | "payload" | "executionId"
+    >
   : T extends "handle_proxy"
     ? P extends "get"
       ? Pick<
@@ -51,7 +64,20 @@ export type MsgToWorker<
             MsgToWorkerBasic<T, A, K, P>,
             "type" | "proxyTargetId" | "trap" | "property" | "value"
           >
-        : never
+        : P extends "apply"
+          ? Pick<
+              MsgToWorkerBasic<T, A, K, P>,
+              | "type"
+              | "proxyTargetId"
+              | "trap"
+              | "argumentList"
+              | "getterId"
+              | "parentProperty"
+              | "argProxyContexts"
+              | "thisProxyContext"
+              | "thisArg"
+            >
+          : never
     : T extends "revoke_proxy"
       ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId">
       : T extends "check_clonability"
@@ -128,17 +154,6 @@ type ReadyState = { current: 0 | 1 | 2 };
 //#region - WorkerHandler
 
 export class WorkerHandler<A extends CommonActions> {
-  private worker: Worker;
-
-  private id = 0;
-
-  private listenerMapsSet: Set<ListenerMap> = new Set();
-
-  private messageChannelsSet: Set<{
-    messageChannel: MessageChannel;
-    readyState: ReadyState;
-  }> = new Set();
-
   constructor(workerSrc: string | URL | Worker, options?: WorkerOptions) {
     const _options: WorkerOptions = {
       ...options,
@@ -163,6 +178,19 @@ export class WorkerHandler<A extends CommonActions> {
     };
     this.handleListeners(initialListenerMap);
   }
+
+  //#region - 私有方法和属性
+
+  private worker: Worker;
+
+  private executionId = 0;
+
+  private listenerMapsSet: Set<ListenerMap> = new Set();
+
+  private messageChannelsSet: Set<{
+    messageChannel: MessageChannel;
+    readyState: ReadyState;
+  }> = new Set();
 
   //#region - this.handleListeners ！！ 处理消息的核心
 
@@ -205,37 +233,14 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#endregion
 
-  get instance() {
-    return this.worker;
-  }
-
-  /**
-   * 终止 worker 进程，并移除主线程上为 worker 进程添加的监听器
-   */
-  terminate() {
-    this.worker.terminate();
-    this.listenerMapsSet.forEach((listenerMap) => {
-      this.handleListeners(listenerMap, false);
-    });
-    this.listenerMapsSet.clear();
-    this.messageChannelsSet.forEach((messageChannel) => {
-      const {
-        readyState,
-        messageChannel: { port1, port2 },
-      } = messageChannel;
-      readyState.current = 2;
-      port1.close();
-      port2.close();
-    });
-    this.messageChannelsSet.clear();
-  }
+  //#region - postMsgToWorker
 
   /**
    * 传递消息传递给 worker，使得 worker 调用 action
    * @param actionName action 的名称
    * @param options 配置选项
    * @param payload action 接收参数
-   * @returns [id, timeout]
+   * @returns [executionId, timeout]
    */
   private postMsgToWorker<K extends keyof A>(
     actionName: K,
@@ -257,25 +262,29 @@ export class WorkerHandler<A extends CommonActions> {
       type: "execute_action",
       actionName,
       payload,
-      id: this.id++,
+      executionId: this.executionId++,
     };
     try {
       this.worker.postMessage(msgToWorker, transfer);
     } catch (error) {
       console.error(error);
     }
-    return [msgToWorker.id, timeout] as [number, number];
+    return [msgToWorker.executionId, timeout] as [number, number];
   }
+
+  //#endregion
+
+  //#region - watchMsgFromWorker
 
   /**
    * 当传递消息给 worker 后，监听产生的非终止消息
-   * @param id
+   * @param executionId
    * @param actionName
    * @param readyState
    * @returns [messagePort, receivePort, listenerMap, messageChannel]
    */
   private watchMsgFromWorker<D>(
-    id: number,
+    executionId: number,
     actionName: keyof A,
     readyState: ReadyState
   ) {
@@ -290,7 +299,10 @@ export class WorkerHandler<A extends CommonActions> {
 
     const startSignalListenerMap: ListenerMap = {
       message: (e: MessageEvent<MsgFromWorker<"start_signal">>) => {
-        if (e.data.type === "start_signal" && e.data.id === id) {
+        if (
+          e.data.type === "start_signal" &&
+          e.data.executionId === executionId
+        ) {
           readyState.current = 1;
           this.handleListeners(startSignalListenerMap, false);
         }
@@ -303,7 +315,7 @@ export class WorkerHandler<A extends CommonActions> {
       message: (
         e: MessageEvent<MsgFromWorker<"action_data" | "port_proxy", D>>
       ) => {
-        if (e.data.done || e.data.id !== id) return;
+        if (e.data.done || e.data.executionId !== executionId) return;
         if (e.data.type === "action_data") {
           const msgData: MsgData<A, D, "message"> = {
             data: e.data.data,
@@ -321,7 +333,7 @@ export class WorkerHandler<A extends CommonActions> {
         }
       },
       messageerror: (e: MessageEvent<MsgFromWorker<"message_error">>) => {
-        if (e.data.id === id && !e.data.done) {
+        if (e.data.executionId === executionId && !e.data.done) {
           receivePort.dispatchEvent(
             new MessageEvent("messageerror", {
               data: { actionName, error: e.data.error },
@@ -340,9 +352,13 @@ export class WorkerHandler<A extends CommonActions> {
     ];
   }
 
+  //#endregion
+
+  //#region - watchResultFromWorker
+
   /**
    * 当传递消息给 worker 后，监听产生的终止消息
-   * @param id
+   * @param executionId
    * @param actionName
    * @param timeout
    * @param msgListenerMap
@@ -351,7 +367,7 @@ export class WorkerHandler<A extends CommonActions> {
    * @returns promise
    */
   private watchResultFromWorker<D>(
-    id: number,
+    executionId: number,
     actionName: keyof A,
     timeout: number,
     msgListenerMap: ListenerMap,
@@ -367,7 +383,11 @@ export class WorkerHandler<A extends CommonActions> {
       }
 
       const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
-        if (e.data.type === "action_data" && e.data.id === id && e.data.done) {
+        if (
+          e.data.type === "action_data" &&
+          e.data.executionId === executionId &&
+          e.data.done
+        ) {
           const data = e.data.data as D;
           const result: MsgData<A, D> = { actionName, data, isProxy: false };
           resolve(result);
@@ -377,7 +397,7 @@ export class WorkerHandler<A extends CommonActions> {
       const messageerror = (
         e: MessageEvent<MsgFromWorker<"message_error", D>>
       ) => {
-        if (e.data.id === id && e.data.done) {
+        if (e.data.executionId === executionId && e.data.done) {
           reject({
             data: { actionName, error: e.data.error },
           });
@@ -413,6 +433,10 @@ export class WorkerHandler<A extends CommonActions> {
     return promise;
   }
 
+  //#endregion
+
+  //#region - reduceEventListener
+
   /**
    * 将 messageSource 接收的 listener 中的参数还原为标准的 listener 的参数
    * @param extendedListener messageSource 接收的 listener
@@ -426,7 +450,7 @@ export class WorkerHandler<A extends CommonActions> {
     ) => any,
     receivePort: MessagePort
   ) {
-    return (ev: MessageEvent<MsgData<A, any>>) => {
+    return async (ev: MessageEvent<MsgData<A, any>>) => {
       const extendedEventTmp: any = {};
       for (const p in ev) {
         let item = ev[p as keyof typeof ev];
@@ -436,7 +460,10 @@ export class WorkerHandler<A extends CommonActions> {
       let extendedEvent: any;
       if (ev.data.isProxy) {
         const msgData = ev.data as MsgData<A, any, "proxy">;
-        const data = this.createProxy(msgData.proxyTargetId);
+        const data = this.createProxy(
+          msgData.proxyTargetId,
+          Symbol.for("root_proxy")
+        );
         extendedEvent = { ...extendedEventTmp, ...msgData, data };
       } else {
         const msgData = ev.data as MsgData<A, any, "message">;
@@ -446,38 +473,62 @@ export class WorkerHandler<A extends CommonActions> {
     };
   }
 
+  //#endregion
+
+  //#region - receiveProxyData
+
+  /**
+   * 在 this.handleProxy() 中，当需要获取 Worker 中传递来的 handle_proxy 执行结果消息时调用
+   * @param handleProxyMsg
+   * @returns 一个 target 为 promise 的 proxy
+   */
+  private receiveProxyData(
+    handleProxyMsg: MsgToWorker<"handle_proxy", A, keyof A, "get" | "apply">
+  ) {
+    const promise = new Promise((resolve) => {
+      const handleProxylistenerMap: ListenerMap = {
+        message: (e: MessageEvent<MsgFromWorker>) => {
+          if (
+            e.data.type === "proxy_data" &&
+            e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
+            e.data.getterId === handleProxyMsg.getterId
+          ) {
+            resolve(e.data.data);
+            this.handleListeners(handleProxylistenerMap, false);
+          } else if (
+            e.data.type === "create_subproxy" &&
+            e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
+            e.data.getterId === handleProxyMsg.getterId
+          ) {
+            resolve(
+              this.createProxy(e.data.proxyTargetId, Symbol.for("sub_proxy"))
+            );
+          }
+        },
+      };
+      this.handleListeners(handleProxylistenerMap);
+    });
+    return this.createProxy(
+      handleProxyMsg.proxyTargetId,
+      promise,
+      (handleProxyMsg as any).property
+    );
+  }
+
   private handleProxy(handleProxyMsg: MsgToWorker<"handle_proxy">) {
     this.worker.postMessage(handleProxyMsg);
-    if (handleProxyMsg.trap === "get") {
-      const promise = new Promise((resolve) => {
-        const handleProxylistenerMap: ListenerMap = {
-          message: (e: MessageEvent<MsgFromWorker>) => {
-            if (
-              e.data.type === "proxy_data" &&
-              e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
-              e.data.getterId === handleProxyMsg.getterId
-            ) {
-              resolve(e.data.data);
-              this.handleListeners(handleProxylistenerMap, false);
-            } else if (
-              e.data.type === "create_subproxy" &&
-              e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
-              e.data.getterId === handleProxyMsg.getterId
-            ) {
-              resolve(this.createProxy(e.data.proxyTargetId));
-            }
-          },
-        };
-        this.handleListeners(handleProxylistenerMap);
-      });
+    const { trap } = handleProxyMsg;
 
-      return this.createProxy(
-        handleProxyMsg.proxyTargetId,
-        promise,
-        handleProxyMsg.property!
-      );
+    if (trap === "get") {
+      return this.receiveProxyData(handleProxyMsg);
+    } else if (trap === "set") {
+      return true;
+    } else if (trap === "apply") {
+      return this.receiveProxyData(handleProxyMsg);
     }
   }
+
+  //#endregion
 
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
   private proxyGetterId = 0;
@@ -485,8 +536,14 @@ export class WorkerHandler<A extends CommonActions> {
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
   private proxyWeakMap = new WeakMap<
     any,
-    { proxyTargetId: number; revoke: () => void }
+    {
+      proxyTargetId: number;
+      parentProperty: keyof any | (keyof any)[] | null;
+      revoke: () => void;
+    }
   >();
+
+  //#region - createProxy
 
   /**
    * 收到 worker 传来的带有 port_proxy 或 create_subproxy 标识的消息后，为 Worker 中的对应目标创建一个 proxy
@@ -497,17 +554,24 @@ export class WorkerHandler<A extends CommonActions> {
    */
   private createProxy(
     proxyTargetId: number,
-    target = {},
+    target: any = {},
     parentProperty: keyof any | (keyof any)[] | null = null
   ) {
     const _this = this;
 
     const handler: ProxyHandler<any> = {
-      get(target, property, receiver) {
-        if (property in target) {
-          const value = target[property];
+      get(_target, property, receiver) {
+        if (
+          (target === Symbol.for("root_proxy") ||
+            target === Symbol.for("sub_proxy")) &&
+          property === "then"
+        )
+          return;
+
+        if (property in _target) {
+          const value = _target[property];
           if (typeof value === "function") {
-            return value.bind(target);
+            return value.bind(_target);
           } else {
             return value;
           }
@@ -529,6 +593,7 @@ export class WorkerHandler<A extends CommonActions> {
         } else {
           propertyValue = property;
         }
+
         return _this.handleProxy({
           type: "handle_proxy",
           trap: "get",
@@ -538,9 +603,9 @@ export class WorkerHandler<A extends CommonActions> {
         });
       },
 
-      set(target, property, value) {
-        if (property in target) {
-          return Reflect.set(target, property, value);
+      set(_target, property, value) {
+        if (property in _target) {
+          return Reflect.set(_target, property, value);
         }
 
         const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
@@ -568,19 +633,57 @@ export class WorkerHandler<A extends CommonActions> {
           propertyValue = property;
         }
 
-        _this.handleProxy({
+        return _this.handleProxy({
           type: "handle_proxy",
           trap: "set",
           proxyTargetId,
           property: propertyValue,
           value,
         });
+      },
 
-        return true;
+      apply(_target, thisArg, _argumentList) {
+        // 处理 thisArg
+        const _thisProxyContext = _this.proxyWeakMap.get(thisArg);
+        function reduceThisProxyContext(
+          thisProxyContext: typeof _thisProxyContext
+        ) {
+          if (thisProxyContext) {
+            const { proxyTargetId, parentProperty } = thisProxyContext;
+            return { proxyTargetId, parentProperty };
+          }
+        }
+
+        // 处理 argumentList
+        const argProxyContexts: MsgToWorkerBasic["argProxyContexts"] = [];
+        const argumentList = _argumentList.map((arg, index) => {
+          const argProxyContext = _this.proxyWeakMap.get(arg);
+          if (argProxyContext) {
+            const { proxyTargetId, parentProperty } = argProxyContext;
+            argProxyContexts[index] = { proxyTargetId, parentProperty };
+            return null;
+          }
+          return arg;
+        });
+
+        return _this.handleProxy({
+          type: "handle_proxy",
+          trap: "apply",
+          proxyTargetId,
+          argumentList,
+          getterId: _this.proxyGetterId++,
+          parentProperty: Array.isArray(parentProperty)
+            ? parentProperty
+            : parentProperty
+              ? [parentProperty]
+              : [],
+          argProxyContexts,
+          thisProxyContext: reduceThisProxyContext(_thisProxyContext),
+          thisArg: _thisProxyContext ? undefined : thisArg,
+        });
       },
 
       // has() {},
-      // apply() {},
       // construct() {},
       // defineProperty() {},
       // deleteProperty() {},
@@ -591,23 +694,82 @@ export class WorkerHandler<A extends CommonActions> {
       // ownKeys() {},
       // preventExtensions(){},
     };
-    const { proxy, revoke } = Proxy.revocable(target, handler);
+
+    const targetArg = typeof target !== "symbol" ? target : {};
+
+    const targetProxy = new Proxy(() => {}, {
+      get(_, property) {
+        if (property in targetArg) {
+          const value = targetArg[property];
+          if (typeof value === "function") {
+            return value.bind(targetArg);
+          } else {
+            return value;
+          }
+        }
+
+        return Reflect.get(targetArg, property);
+      },
+      set(_, property, value) {
+        return Reflect.set(targetArg, property, value);
+      },
+      apply(target, thisArg, argumentList) {
+        return Reflect.apply(target, thisArg, argumentList);
+      },
+      has(_, property) {
+        return Reflect.has(targetArg, property);
+      },
+    });
+
+    const { proxy, revoke } = Proxy.revocable(targetProxy, handler);
 
     this.proxyWeakMap.set(proxy, {
       proxyTargetId,
+      parentProperty,
       revoke,
     });
 
     return proxy;
   }
 
+  //#endregion
+
+  //#endregion
+
+  //#region - 暴露给实例的方法和属性
+
+  get instance() {
+    return this.worker;
+  }
+
+  /**
+   * 终止 worker 进程，并移除主线程上为 worker 进程添加的监听器
+   */
+  terminate() {
+    this.worker.terminate();
+    this.listenerMapsSet.forEach((listenerMap) => {
+      this.handleListeners(listenerMap, false);
+    });
+    this.listenerMapsSet.clear();
+    this.messageChannelsSet.forEach((messageChannel) => {
+      const {
+        readyState,
+        messageChannel: { port1, port2 },
+      } = messageChannel;
+      readyState.current = 2;
+      port1.close();
+      port2.close();
+    });
+    this.messageChannelsSet.clear();
+  }
+
   revokeProxy(proxy: any) {
-    const proxyItem = this.proxyWeakMap.get(proxy);
-    if (!proxyItem) return;
-    proxyItem.revoke();
+    const proxyContext = this.proxyWeakMap.get(proxy);
+    if (!proxyContext) return;
+    proxyContext.revoke();
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
-      proxyTargetId: proxyItem.proxyTargetId,
+      proxyTargetId: proxyContext.proxyTargetId,
     };
     this.worker.postMessage(revokeProxyMsg);
   }
@@ -624,7 +786,7 @@ export class WorkerHandler<A extends CommonActions> {
     options?: ExecuteOptions<D> | Transfer<D, number | null | undefined>,
     ...payload: D
   ) {
-    const [id, timeout] = this.postMsgToWorker(
+    const [executionId, timeout] = this.postMsgToWorker(
       actionName,
       options || [],
       ...payload
@@ -633,10 +795,10 @@ export class WorkerHandler<A extends CommonActions> {
     const readyState: ReadyState = { current: 0 };
 
     const [receivePort, msgListenerMap, messageChannel] =
-      this.watchMsgFromWorker(id, actionName, readyState);
+      this.watchMsgFromWorker(executionId, actionName, readyState);
 
     const promise = this.watchResultFromWorker<GetDataType<A, K>>(
-      id,
+      executionId,
       actionName,
       timeout,
       msgListenerMap,
@@ -747,5 +909,7 @@ export class WorkerHandler<A extends CommonActions> {
     return messageSource;
   }
 }
+
+//#endregion
 
 //#endregion
