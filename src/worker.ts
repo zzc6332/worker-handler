@@ -360,6 +360,28 @@ function postProxyData(
   }
 }
 
+/**
+ * 根据 proxyContext 获取对应的 target
+ * @param proxyContext
+ * @returns target
+ */
+function getTargetByProxyContext(proxyContext: ProxyContext) {
+  // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
+  const proxyTargetTreeNode = getProxyTargetTreeNode(
+    proxyContext.proxyTargetId
+  );
+  const rootProxyTarget = proxyTargetTreeNode.value.target;
+
+  // 将 thisProxyContext.parentProperty 整理为数组，用它获取到具体的 target
+  let { parentProperty } = proxyContext;
+  parentProperty = Array.isArray(parentProperty)
+    ? parentProperty
+    : parentProperty
+      ? [parentProperty]
+      : [];
+
+  return parentProperty.reduce((prev, cur) => prev[cur], rootProxyTarget);
+}
 //#endregion
 
 //#endregion
@@ -518,33 +540,11 @@ export function createOnmessage<A extends CommonActions>(
         const {
           getterId,
           parentProperty,
-          argumentList, // argumentList 中可以被结构化克隆的部分会在这里被接收
-          argProxyContexts, // argumentList 中如果存在元素是在 Main 中是已注册的 proxy，那么他们会以 ProxyContext 的形式传递到这里
+          argumentsList, // argumentsList 中可以被结构化克隆的部分会在这里被接收
+          argProxyContexts, // argumentsList 中如果存在元素是在 Main 中是已注册的 proxy，那么他们会以 ProxyContext 的形式传递到这里
           thisProxyContext, // thisArg 如果在 Main 中是已注册的 proxy，那么会以 ProxyContext 的形式传递到这里
           thisArg: _thisArg, // 如果 Main 中传递的 thisArg 可以被结构化克隆，则会在这里被接收到，否则这里的 thisArg 接收 undefined
         } = e.data;
-
-        // 根据 proxyContext 获取对应的 target
-        function getTargetByProxyContext(proxyContext: ProxyContext) {
-          // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
-          const proxyTargetTreeNode = getProxyTargetTreeNode(
-            proxyContext.proxyTargetId
-          );
-          const rootProxyTarget = proxyTargetTreeNode.value.target;
-
-          // 将 thisProxyContext.parentProperty 整理为数组，用它获取到具体的 target
-          let { parentProperty } = proxyContext;
-          parentProperty = Array.isArray(parentProperty)
-            ? parentProperty
-            : parentProperty
-              ? [parentProperty]
-              : [];
-
-          return parentProperty.reduce(
-            (prev, cur) => prev[cur],
-            rootProxyTarget
-          );
-        }
 
         //#region - 处理 thisArg
 
@@ -561,11 +561,11 @@ export function createOnmessage<A extends CommonActions>(
 
         //#endregion
 
-        //#region - 处理 argumentList
-        const _argumentList = [...argumentList];
+        //#region - 处理 argumentsList
+        const _argumentsList = [...argumentsList];
         argProxyContexts.forEach((argProxyContext, index) => {
           if (argProxyContext) {
-            _argumentList[index] = getTargetByProxyContext(argProxyContext);
+            _argumentsList[index] = getTargetByProxyContext(argProxyContext);
           }
         });
         //#endregion
@@ -573,8 +573,34 @@ export function createOnmessage<A extends CommonActions>(
         const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
         const { target } = proxyTargetTreeNode.value;
         const fn = parentProperty.reduce((prev, cur) => prev[cur], target);
-        const result = fn.apply(thisArg, _argumentList);
-        postProxyData(proxyTargetId, getterId, result, proxyTargetTreeNode);
+        const result = fn.apply(thisArg, _argumentsList);
+
+        postProxyData(proxyTargetId, getterId, result);
+
+        //#endregion
+
+        //#region - construct trap
+      } else if (trap === "construct") {
+        const { getterId, parentProperty, argumentsList, argProxyContexts } =
+          e.data;
+
+        // 处理 argumentsList
+        const _argumentsList = [...argumentsList];
+        argProxyContexts.forEach((argProxyContext, index) => {
+          if (argProxyContext) {
+            _argumentsList[index] = getTargetByProxyContext(argProxyContext);
+          }
+        });
+
+        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+        const { target } = proxyTargetTreeNode.value;
+        const constructor = parentProperty.reduce(
+          (prev, cur) => prev[cur],
+          target
+        );
+        const instance = new constructor(..._argumentsList);
+
+        postProxyData(proxyTargetId, getterId, instance);
 
         //#endregion
       }
