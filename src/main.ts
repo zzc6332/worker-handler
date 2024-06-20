@@ -397,33 +397,38 @@ export class WorkerHandler<A extends CommonActions> {
         }, timeout);
       }
 
-      const message = (e: MessageEvent<MsgFromWorker<"action_data", D>>) => {
-        if (
-          e.data.type === "action_data" &&
-          e.data.executionId === executionId &&
-          e.data.done
+      resultListenerMap = {
+        message(
+          e: MessageEvent<MsgFromWorker<"action_data" | "port_proxy", D>>
         ) {
-          const data = e.data.data as D;
-          const result: MsgData<A, D> = { actionName, data, isProxy: false };
-          resolve(result);
-        }
+          if (!e.data.done || e.data.executionId !== executionId) return;
+          if (e.data.type === "action_data") {
+            const result: MsgData<A, D, "message"> = {
+              data: e.data.data,
+              actionName,
+              isProxy: false,
+            };
+            resolve(result);
+          } else if (e.data.type === "port_proxy") {
+            const result: MsgData<A, D, "proxy"> = {
+              actionName,
+              isProxy: true,
+              proxyTargetId: e.data.proxyTargetId,
+            };
+            resolve(result);
+          }
+        },
+        messageerror(e: MessageEvent<MsgFromWorker<"message_error", D>>) {
+          if (e.data.executionId === executionId && e.data.done) {
+            reject({
+              data: { actionName, error: e.data.error },
+            });
+          }
+        },
+        error(e: ErrorEvent) {
+          reject(e);
+        },
       };
-
-      const messageerror = (
-        e: MessageEvent<MsgFromWorker<"message_error", D>>
-      ) => {
-        if (e.data.executionId === executionId && e.data.done) {
-          reject({
-            data: { actionName, error: e.data.error },
-          });
-        }
-      };
-
-      const error = (e: ErrorEvent) => {
-        reject(e);
-      };
-
-      resultListenerMap = { message, messageerror, error };
 
       this.handleListeners(resultListenerMap);
     });
@@ -437,15 +442,25 @@ export class WorkerHandler<A extends CommonActions> {
     };
 
     // 之所以要在 then() 和 catch() 的回调中中分别执行一次 clearEffects()，而不在 finally() 的回调中执行，是为了保证当用户在 promise 的 then() 或 catch() 的回调中访问到的 readyState.current 一定为 2，而 finally() 中的回调的执行晚于 then() 和 catch() 的回调的执行
-    promise
-      .then(() => {
+    const result = promise
+      .then((res) => {
         clearEffects();
+        if (res.isProxy) {
+          const msgData = res as MsgData<A, D, "proxy">;
+          const data = this.createProxy(
+            msgData.proxyTargetId,
+            Symbol.for("root_proxy")
+          );
+          return { ...res, data };
+        } else {
+          return res as MsgData<A, D, "message">;
+        }
       })
       .catch(() => {
         clearEffects();
       });
 
-    return promise;
+    return result as Promise<MsgData<A, D, "message" | "proxy">>;
   }
 
   //#endregion
@@ -720,7 +735,7 @@ export class WorkerHandler<A extends CommonActions> {
         });
       },
 
-      construct(_, _argumentsList, newTarget) {
+      construct(_, _argumentsList) {
         // 处理 argumentList
         const { argProxyContexts, argumentsList } =
           utilsForHandler.handleArguments(_argumentsList);
@@ -739,16 +754,6 @@ export class WorkerHandler<A extends CommonActions> {
           argProxyContexts,
         });
       },
-
-      // has() {},
-      // defineProperty() {},
-      // deleteProperty() {},
-      // getOwnPropertyDescriptor() {},
-      // getPrototypeOf() {},
-      // setPrototypeOf(){}
-      // isExtensible() {},
-      // ownKeys() {},
-      // preventExtensions(){},
     };
 
     const targetArg = typeof target !== "symbol" ? target : {};
