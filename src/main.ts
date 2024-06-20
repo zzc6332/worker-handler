@@ -434,11 +434,15 @@ export class WorkerHandler<A extends CommonActions> {
     });
 
     const clearEffects = () => {
+      // 当一个 action 从 Worker 获取到 result 响应（即终止消息）时清除副作用，由于此时已经不需要再从 Worker 接收 响应消息了，因此可以立马将 resultListenerMap 和 msgListenerMap 中的监听器全部移除
       this.handleListeners(resultListenerMap, false);
       this.handleListeners(msgListenerMap, false);
-      messageChannel.port1.close();
-      messageChannel.port2.close();
       readyState.current = 2;
+      // 但是在 promise 被 resolve 之前的一瞬间，如果 action 从 Worker 获取到了 msg 响应（即非终止消息），那么还此时需要使用 messageChannel 来将响应传递给 messageSource，因此关闭 messageChannel 中的 port 的操作异步执行
+      setTimeout(() => {
+        messageChannel.port1.close();
+        messageChannel.port2.close();
+      });
     };
 
     // 之所以要在 then() 和 catch() 的回调中中分别执行一次 clearEffects()，而不在 finally() 的回调中执行，是为了保证当用户在 promise 的 then() 或 catch() 的回调中访问到的 readyState.current 一定为 2，而 finally() 中的回调的执行晚于 then() 和 catch() 的回调的执行
@@ -460,6 +464,7 @@ export class WorkerHandler<A extends CommonActions> {
         clearEffects();
       });
 
+    // 返回的这个 promise 会在 this.execute() 中再用于进行一次副作用清理
     return result as Promise<MsgData<A, D, "message" | "proxy">>;
   }
 
@@ -906,10 +911,13 @@ export class WorkerHandler<A extends CommonActions> {
     promise
       .catch(() => {})
       .finally(() => {
-        listenerSet.forEach((listenerTuple) => {
-          receivePort.removeEventListener(listenerTuple[0], listenerTuple[1]);
+        // 如果 promise 被 resolve 之前的一瞬间，action 从 Worker 获取到了 msg 响应（即非终止消息），那么添加给 receivePort 的监听器还需要用来接收这次消息的数据，因此将移除监听器的操作异步执行
+        setTimeout(() => {
+          listenerSet.forEach((listenerTuple) => {
+            receivePort.removeEventListener(listenerTuple[0], listenerTuple[1]);
+          });
+          listenerSet.clear();
         });
-        listenerSet.clear();
       });
 
     let messageerrorCallback:
