@@ -17,7 +17,7 @@ type MsgFromWorkerType =
 
 type MsgFromWorkerBasic<
   T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = MessageData,
+  D = CloneableMessageData,
 > = {
   type: T;
   data: D;
@@ -31,7 +31,7 @@ type MsgFromWorkerBasic<
 
 export type MsgFromWorker<
   T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = MessageData,
+  D = CloneableMessageData,
 > = T extends "action_data"
   ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "executionId" | "done">
   : T extends "message_error"
@@ -106,15 +106,15 @@ export type StructuredCloneable<T = never> =
 
 //#region - MessageData 相关
 
-export type MessageData = StructuredCloneable<Transferable>;
+export type CloneableMessageData = StructuredCloneable<Transferable>;
 
-type ObjectInMessageData = {
-  [k: string | number]: MessageData;
+type ObjectInCloneableMessageData = {
+  [k: string | number]: CloneableMessageData;
 };
 
 // 获取 ObjectInMessageData 中的所有 Transferable 的具体类型组成的联合类型
 type GetTransferableInObject<
-  D extends ObjectInMessageData,
+  D extends ObjectInCloneableMessageData,
   L extends number | null,
   P extends number | null = Prev<L>,
 > = [L] extends [number]
@@ -129,16 +129,16 @@ type GetTransferableInObject<
 
 // 获取 MessageData 中的所有 Transferable 类型的具体类型组成的联合类型
 export type GetTransferables<
-  D extends MessageData,
+  D extends CloneableMessageData,
   L extends number | null,
   P extends number | null = Prev<L>,
 > = [L] extends [number]
   ? D extends Transferable
     ? D // 当 D 直接是 Transferable 的情况，递归的终点
-    : D extends ObjectInMessageData
+    : D extends ObjectInCloneableMessageData
       ? GetTransferableInObject<D, P> // 当 D 是 ObjectInMessageData 的情况
       : D extends
-            | Array<infer T extends MessageData>
+            | Array<infer T extends CloneableMessageData>
             | Map<infer T, any>
             | Map<any, infer T>
             | Set<infer T>
@@ -148,7 +148,7 @@ export type GetTransferables<
 
 // postMessage 方法的 transfer 参数，以及 excute 方法的 options 参数的类型推导，其中 E 表示不需要 transfer 时其它的可选类型，适用于 excute 中
 export type Transfer<
-  D extends MessageData,
+  D extends CloneableMessageData,
   E = never,
   T extends Transferable | null = GetTransferables<D, 10>,
 > = T extends Transferable ? [T, ...Transferable[]] : Transferable[] | E;
@@ -179,7 +179,7 @@ type Prev<N extends number | null> = N extends 1
 //#region  - action 相关
 
 export type ActionResult<
-  D extends MessageData | void = void,
+  D extends CloneableMessageData | void = void,
   T extends Transferable[] = Transfer<Exclude<D, void>>,
 > = Promise<
   D extends void
@@ -195,7 +195,7 @@ export type CommonActions = {
   [K: string]: (
     this: ActionThis,
     ...args: any[]
-  ) => ActionResult<MessageData | void>;
+  ) => ActionResult<CloneableMessageData | void>;
 };
 
 export type ActionWithThis<
@@ -208,7 +208,7 @@ export type ActionWithThis<
   ) => ReturnType<A[K]>;
 };
 
-type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
+type PostMsgWithId<D extends CloneableMessageData = CloneableMessageData> = D extends undefined
   ? (data?: undefined, transfer?: []) => void
   : GetTransferables<D, 10> extends null
     ? (data: Exclude<D, undefined>, transfer?: []) => void
@@ -219,7 +219,7 @@ type PostMsgWithId<D extends MessageData = MessageData> = D extends undefined
 
 type ActionThis<
   A extends CommonActions = CommonActions,
-  D extends MessageData = MessageData,
+  D extends CloneableMessageData = CloneableMessageData,
 > = {
   $post: PostMsgWithId<D>;
   $end: PostMsgWithId<D>;
@@ -414,7 +414,7 @@ export function createOnmessage<A extends CommonActions>(
       postMessage(startSignalMsg);
 
       const postMsgWithId: PostMsgWithId = (
-        data?: MessageData,
+        data?: CloneableMessageData,
         transfer: Transferable[] = []
       ) => {
         const done = false;
@@ -428,12 +428,12 @@ export function createOnmessage<A extends CommonActions>(
       };
 
       const postResultWithId: PostMsgWithId = (
-        data?: MessageData,
+        data?: CloneableMessageData,
         transfer: Transferable[] = []
       ) => {
         Promise.resolve([data, transfer]).then((res) => {
           const toMain: Awaited<ReturnType<A[string]>> = res as any;
-          let data: MessageData = null;
+          let data: CloneableMessageData = null;
           let transfer: Transferable[] = [];
           if (Array.isArray(toMain)) {
             data = toMain[0];
@@ -474,7 +474,7 @@ export function createOnmessage<A extends CommonActions>(
           payload
         );
         if (toMain !== undefined) {
-          let data: MessageData = null;
+          let data: CloneableMessageData = null;
           let transfer: Transferable[] = [];
           if (Array.isArray(toMain)) {
             data = toMain[0];
