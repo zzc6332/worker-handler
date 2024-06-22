@@ -2,7 +2,7 @@ import {
   CommonActions,
   MsgFromWorker,
   ActionResult,
-  MessageData,
+  CloneableMessageData,
   Transfer,
 } from "./worker.js";
 
@@ -120,9 +120,9 @@ export type GetDataType<A extends CommonActions, K extends keyof A> =
     ? Exclude<D, void> extends never
       ? undefined
       : Exclude<D, void>
-    : MessageData;
+    : CloneableMessageData;
 
-type ExecuteOptions<D extends MessageData[] = MessageData[]> = {
+type ExecuteOptions<D extends CloneableMessageData[] = CloneableMessageData[]> = {
   transfer: Transfer<D>;
   timeout?: number;
 };
