@@ -3,8 +3,9 @@ import {
   MsgFromWorker,
   ActionResult,
   CloneableMessageData,
-  Transfer,
 } from "./worker.js";
+
+import { getTransfers } from "./type-judge";
 
 //#region - types
 
@@ -122,9 +123,9 @@ export type GetDataType<A extends CommonActions, K extends keyof A> =
       : Exclude<D, void>
     : CloneableMessageData;
 
-type ExecuteOptions<D extends CloneableMessageData[] = CloneableMessageData[]> = {
-  transfer: Transfer<D>;
-  timeout?: number;
+type ExecuteOptions = {
+  transfer: Transferable[] | "auto";
+  timeout: number;
 };
 
 type ListenerMap = {
@@ -255,36 +256,26 @@ export class WorkerHandler<A extends CommonActions> {
    * @param actionName action 的名称
    * @param options 配置选项
    * @param payload action 接收参数
-   * @returns [executionId, timeout]
+   * @returns executionId
    */
   private postMsgToWorker<K extends keyof A>(
     actionName: K,
-    options: ExecuteOptions | Transferable[] | number,
+    transfer: Transferable[],
     ...payload: Parameters<A[K]>
   ) {
-    let transfer: Transferable[] = [];
-    let timeout: number = 0;
-    if (Array.isArray(options)) {
-      transfer = options;
-    } else if (typeof options === "number") {
-      timeout = options;
-    } else {
-      transfer = options.transfer || [];
-      timeout = options.timeout || 0;
-    }
-
     const msgToWorker: MsgToWorker<"execute_action", A, K> = {
       type: "execute_action",
       actionName,
       payload,
       executionId: this.executionId++,
     };
+
     try {
       this.worker.postMessage(msgToWorker, transfer);
     } catch (error) {
       console.error(error);
     }
-    return [msgToWorker.executionId, timeout] as [number, number];
+    return msgToWorker.executionId
   }
 
   //#endregion
@@ -849,12 +840,29 @@ export class WorkerHandler<A extends CommonActions> {
    */
   execute<K extends keyof A, D extends Parameters<A[K]> = Parameters<A[K]>>(
     actionName: K,
-    options?: ExecuteOptions<D> | Transfer<D, number | null | undefined>,
+    options?:
+      | Partial<ExecuteOptions>
+      | ExecuteOptions["transfer"]
+      | ExecuteOptions["timeout"]
+      | null,
     ...payload: D
   ) {
-    const [executionId, timeout] = this.postMsgToWorker(
+    let inputedTransfer: ExecuteOptions["transfer"] = "auto";
+    let timeout: number = 0;
+    if (Array.isArray(options) || options === "auto") {
+      inputedTransfer = options;
+    } else if (typeof options === "number") {
+      timeout = options;
+    } else if (typeof options === "object" && options !== null) {
+      inputedTransfer = options.transfer || "auto";
+      timeout = options.timeout || 0;
+    }
+    const transfer =
+      inputedTransfer === "auto" ? getTransfers(payload) : inputedTransfer;
+
+    const executionId = this.postMsgToWorker(
       actionName,
-      options || [],
+      transfer,
       ...payload
     );
 

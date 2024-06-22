@@ -1,7 +1,11 @@
 import { GetDataType, MsgToWorker, ProxyContext } from "./main";
 
 import { TreeNode } from "./data-structure";
-import { judgeStructuredCloneable } from "./type-judge";
+import {
+  getTransfers,
+  judgeContainer,
+  judgeStructuredCloneable,
+} from "./type-judge";
 
 //#region - types
 
@@ -56,6 +60,12 @@ export type MsgFromWorker<
                 "type" | "proxyTargetId" | "parentProxyTargetId" | "getterId"
               >
             : never;
+
+type ProxyTargetTreeNodeValue = {
+  target: any;
+  proxyTargetId: number;
+  transfer: Transferable[];
+};
 
 //#endregion
 
@@ -128,7 +138,7 @@ type GetTransferableInObject<
   : null;
 
 // 获取 MessageData 中的所有 Transferable 类型的具体类型组成的联合类型
-export type GetTransferables<
+type GetTransferables<
   D extends CloneableMessageData,
   L extends number | null,
   P extends number | null = Prev<L>,
@@ -147,7 +157,7 @@ export type GetTransferables<
   : null;
 
 // postMessage 方法的 transfer 参数，以及 excute 方法的 options 参数的类型推导，其中 E 表示不需要 transfer 时其它的可选类型，适用于 excute 中
-export type Transfer<
+type Transfer<
   D extends CloneableMessageData,
   E = never,
   T extends Transferable | null = GetTransferables<D, 10>,
@@ -178,18 +188,8 @@ type Prev<N extends number | null> = N extends 1
 
 //#region  - action 相关
 
-export type ActionResult<
-  D extends CloneableMessageData | void = void,
-  T extends Transferable[] = Transfer<Exclude<D, void>>,
-> = Promise<
-  D extends void
-    ? void
-    : D extends Array<any>
-      ? [D, T]
-      : GetTransferables<Exclude<D, void>, 10> extends null
-        ? D | [D, T]
-        : [D, Transfer<Exclude<D, void>>]
->;
+export type ActionResult<D extends CloneableMessageData | void = void> =
+  Promise<D>;
 
 export type CommonActions = {
   [K: string]: (
@@ -208,14 +208,15 @@ export type ActionWithThis<
   ) => ReturnType<A[K]>;
 };
 
-type PostMsgWithId<D extends CloneableMessageData = CloneableMessageData> = D extends undefined
-  ? (data?: undefined, transfer?: []) => void
-  : GetTransferables<D, 10> extends null
-    ? (data: Exclude<D, undefined>, transfer?: []) => void
-    : (
-        data: Exclude<D, undefined>,
-        transfer: Transfer<Exclude<D, undefined>, []>
-      ) => void;
+type PostMsgWithId<D extends CloneableMessageData = CloneableMessageData> =
+  D extends undefined
+    ? (data?: undefined, transfer?: []) => void
+    : GetTransferables<D, 10> extends null
+      ? (data: Exclude<D, undefined>, transfer?: []) => void
+      : (
+          data: Exclude<D, undefined>,
+          transfer: Transfer<Exclude<D, undefined>, []>
+        ) => void;
 
 type ActionThis<
   A extends CommonActions = CommonActions,
@@ -236,10 +237,7 @@ type ActionThis<
 let currentProxyTargetId = 0;
 
 // proxyTargetTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
-const proxyTargetTreeNodes: (TreeNode<{
-  target: any;
-  proxyTargetId: number;
-}> | null)[] = [];
+const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | null)[] = [];
 
 //#region - postActionMessage
 
@@ -250,16 +248,12 @@ const proxyTargetTreeNodes: (TreeNode<{
  */
 function postActionMessage(
   message: MsgFromWorker<"action_data">,
-  options?: Transferable[] | StructuredSerializeOptions
+  transfer: Transferable[] = []
 ) {
   try {
-    if (!judgeStructuredCloneable(message, { transferable: false }))
+    if (!judgeStructuredCloneable(message))
       throw new Error("could not be cloned.");
-    if (Array.isArray(options)) {
-      postMessage(message, options);
-    } else {
-      postMessage(message, options?.transfer!);
-    }
+    postMessage(message, transfer);
   } catch (error: any) {
     //#region - 处理当要传递的消息无法被结构化克隆时的情况
     // 在支持 ES6 Proxy 的环境中，如果传递的数据无法被结构化克隆，可以在 Main 中创建一个 Proxy 来控制该数据
@@ -275,10 +269,12 @@ function postActionMessage(
           proxyTargetId: currentProxyTargetId,
         };
 
-        proxyTargetTreeNodes[currentProxyTargetId] = new TreeNode({
-          target: data,
-          proxyTargetId: currentProxyTargetId,
-        });
+        proxyTargetTreeNodes[currentProxyTargetId] =
+          new TreeNode<ProxyTargetTreeNodeValue>({
+            target: data,
+            proxyTargetId: currentProxyTargetId,
+            transfer,
+          });
 
         currentProxyTargetId++;
         postMessage(proxyMsg);
@@ -328,10 +324,7 @@ function postProxyData(
   proxyTargetId: number,
   getterId: number,
   data: any,
-  parentProxyTargetTreeNode?: TreeNode<{
-    target: any;
-    proxyTargetId: number;
-  }>
+  parentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue>
 ) {
   const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
     type: "proxy_data",
@@ -339,10 +332,15 @@ function postProxyData(
     data,
     getterId: getterId!,
   };
+  const transfer = parentProxyTargetTreeNode
+    ? parentProxyTargetTreeNode.value.transfer.filter((item) =>
+        judgeContainer(data, item)
+      )
+    : getTransfers(data);
   try {
-    if (!judgeStructuredCloneable(proxyDataMsg, { transferable: false }))
+    if (!judgeStructuredCloneable(proxyDataMsg))
       throw new Error("could not be cloned.");
-    postMessage(proxyDataMsg);
+    postMessage(proxyDataMsg, transfer);
   } catch (error: any) {
     // 如果读取到的数据无法被实例化，则继续创建 proxy
     const reg = /could not be cloned\.$/;
@@ -353,9 +351,10 @@ function postProxyData(
       parentProxyTargetId: proxyTargetId,
       getterId: getterId!,
     };
-    const proxyTargetTreeNodeValue = {
+    const proxyTargetTreeNodeValue: ProxyTargetTreeNodeValue = {
       target: data,
       proxyTargetId: currentProxyTargetId,
+      transfer,
     };
     const proxyTargetTreeNode = parentProxyTargetTreeNode
       ? parentProxyTargetTreeNode.addChild(proxyTargetTreeNodeValue)
@@ -413,43 +412,36 @@ export function createOnmessage<A extends CommonActions>(
       };
       postMessage(startSignalMsg);
 
+      // // postMsgWithId 就是 action 中的 this.$post()
       const postMsgWithId: PostMsgWithId = (
         data?: CloneableMessageData,
-        transfer: Transferable[] = []
+        transfer: Transferable[] | "auto" = "auto"
       ) => {
-        const done = false;
-        const msgFromWorker: MsgFromWorker<"action_data"> = {
-          data,
-          executionId,
-          done,
-          type: "action_data",
-        };
-        postActionMessage(msgFromWorker, transfer);
-      };
-
-      const postResultWithId: PostMsgWithId = (
-        data?: CloneableMessageData,
-        transfer: Transferable[] = []
-      ) => {
-        Promise.resolve([data, transfer]).then((res) => {
-          const toMain: Awaited<ReturnType<A[string]>> = res as any;
-          let data: CloneableMessageData = null;
-          let transfer: Transferable[] = [];
-          if (Array.isArray(toMain)) {
-            data = toMain[0];
-            transfer = toMain[1];
-          } else if (toMain) {
-            data = toMain;
-          }
-          const done = true;
-          const resultFromWorker: MsgFromWorker<"action_data"> = {
+        postActionMessage(
+          {
             data,
             executionId,
-            done,
+            done: false,
             type: "action_data",
-          };
-          postActionMessage(resultFromWorker, transfer);
-        });
+          },
+          transfer === "auto" ? getTransfers(data) : transfer
+        );
+      };
+
+      // postResultWithId 就是 action 中的 this.$end()
+      const postResultWithId: PostMsgWithId = (
+        data?: CloneableMessageData,
+        transfer: Transferable[] | "auto" = "auto"
+      ) => {
+        postActionMessage(
+          {
+            data,
+            executionId,
+            done: true,
+            type: "action_data",
+          },
+          transfer === "auto" ? getTransfers(data) : transfer
+        );
       };
 
       const boundActions = { ...actions } as ActionWithThis<A, any>;
@@ -469,27 +461,21 @@ export function createOnmessage<A extends CommonActions>(
       const action = actions[actionName];
 
       try {
-        const toMain = await action.apply(
+        const data = await action.apply(
           actionThis as ActionThis<A, GetDataType<A, keyof A>>,
           payload
         );
-        if (toMain !== undefined) {
-          let data: CloneableMessageData = null;
-          let transfer: Transferable[] = [];
-          if (Array.isArray(toMain)) {
-            data = toMain[0];
-            transfer = toMain[1];
-          } else if (toMain) {
-            data = toMain;
-          }
-          const done = true;
-          const resultFromWorker: MsgFromWorker<"action_data"> = {
-            data,
-            executionId,
-            done,
-            type: "action_data",
-          };
-          postActionMessage(resultFromWorker, transfer);
+        if (data !== undefined) {
+          const transfer = getTransfers(data);
+          postActionMessage(
+            {
+              data,
+              executionId,
+              done: true,
+              type: "action_data",
+            },
+            transfer
+          );
         }
       } catch (error: any) {
         if (
