@@ -1,9 +1,11 @@
+import { CloneableMessageData } from "./worker";
+
 /**
  * 判断一个数据是否是可转移对象
  * @param data
  * @returns boolean
  */
-function judgeTransferable(data: any) {
+function judgeTransferableObj(data: any): data is Transferable {
   let isArrayBuffer = false;
   try {
     isArrayBuffer = data instanceof ArrayBuffer;
@@ -129,48 +131,45 @@ export function judgeStructuredCloneable(
     data instanceof Float64Array ||
     data instanceof BigInt64Array ||
     data instanceof BigUint64Array;
-  const isPrimitive =
+  const isPrimitiveExcludeSymbol =
     typeof data === "number" ||
     typeof data === "string" ||
     typeof data === "boolean" ||
     typeof data === "bigint" ||
     data === null ||
     data === undefined;
-  const isTransferable = judgeTransferable(data);
+  const isTransferable = judgeTransferableObj(data);
   if (
     isArrayBuffer ||
     isBoolean ||
     isDataView ||
     isDate ||
     isError ||
-    isError ||
     isRegExp ||
     isString ||
     isTypedArray ||
-    isPrimitive ||
+    isPrimitiveExcludeSymbol ||
     (options?.transferable ? isTransferable : false)
   ) {
     return true;
   } else {
-    if (data instanceof Array) {
-      return data.reduce(
-        (prev, cur) => prev && judgeStructuredCloneable(cur),
-        true
-      );
-    } else if (data instanceof Map) {
-      for (const item of data) {
-        if (
-          !(judgeStructuredCloneable(item[0]) && judgeStructuredCloneable(item[1]))
-        )
-          return false;
-      }
-      return true;
-    } else if (data instanceof Set) {
+    if (Array.isArray(data) || data instanceof Set) {
       for (const item of data) {
         if (!judgeStructuredCloneable(item)) return false;
       }
       return true;
-    } else if (typeof data === "object") {
+    } else if (data instanceof Map) {
+      for (const item of data) {
+        if (
+          !(
+            judgeStructuredCloneable(item[0]) &&
+            judgeStructuredCloneable(item[1])
+          )
+        )
+          return false;
+      }
+      return true;
+    } else if (typeof data === "object" && data !== null) {
       if (options.complete && Object.getPrototypeOf(data) !== Object.prototype)
         return false;
       for (const key in data) {
@@ -180,4 +179,83 @@ export function judgeStructuredCloneable(
     }
     return false;
   }
+}
+
+/**
+ * 将一个可结构化克隆对象中的可转移对象提取到一个数组中
+ * @param source
+ * @returns extracted
+ */
+export function getTransfers(source: CloneableMessageData) {
+  const extracted = new Set<Transferable>();
+
+  /**
+   * 遍历一个可结构化克隆对象，将其中的可转移对象放入到 extractedSet 中
+   * @param source
+   */
+  function extractTransferableObj(source: CloneableMessageData) {
+    if (judgeTransferableObj(source)) {
+      extracted.add(source);
+      return;
+    }
+
+    const handleItem = (item: CloneableMessageData) => {
+      if (judgeTransferableObj(item)) {
+        extracted.add(item);
+      } else {
+        extractTransferableObj(item);
+      }
+    };
+
+    if (Array.isArray(source) || source instanceof Set) {
+      for (const item of source) {
+        handleItem(item);
+      }
+    } else if (source instanceof Map) {
+      for (const itemTuple of source) {
+        handleItem(itemTuple[0]);
+        handleItem(itemTuple[1]);
+      }
+    } else if (typeof source === "object" && source !== null) {
+      for (const key in source) {
+        const item = (source as any)[key] as CloneableMessageData;
+        handleItem(item);
+      }
+    }
+  }
+
+  extractTransferableObj(source);
+
+  return [...extracted];
+}
+
+/**
+ * 判断一个任意的嵌套对象中是否包含 value
+ * @param container
+ * @param value
+ * @returns boolean
+ */
+export function judgeContainer(container: any, value: any) {
+  if (container === value) return true;
+
+  if (Array.isArray(container) || container instanceof Set) {
+    for (const item of container) {
+      if (judgeContainer(item, value)) return true;
+    }
+  } else if (container instanceof Map) {
+    for (const itemTuple of container) {
+      if (
+        judgeContainer(itemTuple[0], value) ||
+        judgeContainer(itemTuple[1], value)
+      )
+        return true;
+    }
+  } else if (typeof container === "object" && container !== null) {
+    for (const key in container) {
+      const item = container[key];
+      if (judgeContainer(item, value)) return true;
+    }
+  }
+
+  return false;
 }
