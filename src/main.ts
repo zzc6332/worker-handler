@@ -118,15 +118,27 @@ type ExtendedMsgData<A extends CommonActions, D> = {
 };
 
 // 将 Worker 中的 Action 传递的数据的类型 D 转换成 Main 中接收到的数据的类型（如果 D 无法被结构化克隆，则 ReceivedData 会是 Proxy 类型）
-type ReceivedData<D> =
-  D extends StructuredCloneable<Transferable> ? D : ProxyData<D>;
+type ReceivedData<D, T extends boolean = true> =
+  D extends StructuredCloneable<Transferable> ? D : ProxyData<D, T>;
 
-type ProxyData<D> = D extends (...args: any[]) => infer R
+// 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
+type ProxyData<D, T extends boolean = true> = D extends (
+  ...args: any[]
+) => infer R
   ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
   : D extends new (...args: any[]) => infer I
     ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
     : D extends object
-      ? { [K in keyof D]: ReceivedData<D[K]> }
+      ? {
+          [K in keyof D]: T extends true
+            ? D[K] extends (...args: any[]) => any
+              ? ReceivedData<D[K], false>
+              : D[K] extends new (...args: any[]) => any
+                ? ReceivedData<D[K], false>
+                : PromiseLike<ReceivedData<D[K], false>> &
+                    ProxyData<D[K], false>
+            : ProxyData<D[K], false>;
+        }
       : PromiseLike<D>;
 
 //#endregion
