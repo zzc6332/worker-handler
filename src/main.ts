@@ -540,6 +540,7 @@ export class WorkerHandler<A extends CommonActions> {
             resolve(
               this.createProxy(e.data.proxyTargetId, Symbol.for("sub_proxy"))
             );
+            this.handleListeners(handleProxylistenerMap, false);
           }
         },
       };
