@@ -1,4 +1,4 @@
-import { GetDataType, MsgToWorker, ProxyContext } from "./main";
+import { MsgToWorker, ProxyContext } from "./main";
 
 import { TreeNode } from "./data-structure";
 import {
@@ -21,7 +21,7 @@ type MsgFromWorkerType =
 
 type MsgFromWorkerBasic<
   T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = CloneableMessageData,
+  D = any,
 > = {
   type: T;
   data: D;
@@ -35,7 +35,7 @@ type MsgFromWorkerBasic<
 
 export type MsgFromWorker<
   T extends MsgFromWorkerType = MsgFromWorkerType,
-  D = CloneableMessageData,
+  D = any,
 > = T extends "action_data"
   ? Pick<MsgFromWorkerBasic<T, D>, "type" | "data" | "executionId" | "done">
   : T extends "message_error"
@@ -67,135 +67,22 @@ type ProxyTargetTreeNodeValue = {
   transfer: Transferable[];
 };
 
-//#endregion
+// 通过 Actions 的类型和 action 名获取到 action 要向 Main 传递的数据的类型
+export type GetDataType<A extends CommonActions, K extends keyof A> =
+  ReturnType<A[K]> extends ActionResult<infer D>
+    ? Exclude<D, void> extends never
+      ? undefined
+      : Exclude<D, void>
+    : any;
 
-//#region - StructuredCloneable 相关
-
-type TypedArray =
-  | Int8Array
-  | Uint8Array
-  | Uint8ClampedArray
-  | Int16Array
-  | Uint16Array
-  | Int32Array
-  | Uint32Array
-  | Float32Array
-  | Float64Array
-  | BigInt64Array
-  | BigUint64Array;
-
-type Primitive = number | string | boolean | null | undefined | BigInt | symbol;
-
-type StructuredCloneableError =
-  | Error
-  | EvalError
-  | RangeError
-  | ReferenceError
-  | SyntaxError
-  | TypeError
-  | URIError;
-
-// StructuredCloneable 可以接受一个泛型参数以扩展类型
-export type StructuredCloneable<T = never> =
-  | Exclude<Primitive, symbol>
-  | { [k: string | number]: StructuredCloneable<T> }
-  | Array<StructuredCloneable<T>>
-  | Map<StructuredCloneable<T>, StructuredCloneable<T>>
-  | Set<StructuredCloneable<T>>
-  | ArrayBuffer
-  | Boolean
-  | String
-  | DataView
-  | Date
-  | RegExp
-  | TypedArray
-  | StructuredCloneableError
-  | T;
-
-//#endregion
-
-//#region - MessageData 相关
-
-export type CloneableMessageData = StructuredCloneable<Transferable>;
-
-type ObjectInCloneableMessageData = {
-  [k: string | number]: CloneableMessageData;
-};
-
-// 获取 ObjectInMessageData 中的所有 Transferable 的具体类型组成的联合类型
-type GetTransferableInObject<
-  D extends ObjectInCloneableMessageData,
-  L extends number | null,
-  P extends number | null = Prev<L>,
-> = [L] extends [number]
-  ? {
-      [K in keyof D as GetTransferables<D[K], P> extends Transferable
-        ? K
-        : never]: GetTransferables<D[K], P>;
-    } extends infer O // 先定义一个类型 O，O 中的键都是 D 中值类型包含 Transfer 的对应键，O 中的值都是该键最终提取出来的 Transferable 类型
-    ? O[keyof O] // 将 O 中的所有值类型的联合类型返回
-    : null
-  : null;
-
-// 获取 MessageData 中的所有 Transferable 类型的具体类型组成的联合类型
-type GetTransferables<
-  D extends CloneableMessageData,
-  L extends number | null,
-  P extends number | null = Prev<L>,
-> = [L] extends [number]
-  ? D extends Transferable
-    ? D // 当 D 直接是 Transferable 的情况，递归的终点
-    : D extends ObjectInCloneableMessageData
-      ? GetTransferableInObject<D, P> // 当 D 是 ObjectInMessageData 的情况
-      : D extends
-            | Array<infer T extends CloneableMessageData>
-            | Map<infer T, any>
-            | Map<any, infer T>
-            | Set<infer T>
-        ? GetTransferables<T, Prev<L>> // 当 D 是其它引用数据类型的情况
-        : null
-  : null;
-
-// postMessage 方法的 transfer 参数，以及 excute 方法的 options 参数的类型推导，其中 E 表示不需要 transfer 时其它的可选类型，适用于 excute 中
-type Transfer<
-  D extends CloneableMessageData,
-  E = never,
-  T extends Transferable | null = GetTransferables<D, 10>,
-> = T extends Transferable ? [T, ...Transferable[]] : Transferable[] | E;
-
-type Prev<N extends number | null> = N extends 1
-  ? null // 当计数器为 1 时，下一步将是 never，从而停止递归
-  : N extends 2
-    ? 1
-    : N extends 3
-      ? 2
-      : N extends 4
-        ? 3
-        : N extends 5
-          ? 4
-          : N extends 6
-            ? 5
-            : N extends 7
-              ? 6
-              : N extends 8
-                ? 7
-                : N extends 9
-                  ? 8
-                  : N extends 10
-                    ? 9
-                    : never;
 //#endregion
 
 //#region  - action 相关
 
-export type ActionResult<D extends CloneableMessageData | void = void> =
-  Promise<D>;
+export type ActionResult<D extends any = void> = Promise<D>;
 
 export type CommonActions = {
-  [K: string]: (
-    this: ActionThis,
-    ...args: any[]
-  ) => ActionResult<CloneableMessageData | void>;
+  [K: string]: (this: ActionThis, ...args: any[]) => ActionResult<any>;
 };
 
 export type ActionWithThis<
@@ -208,19 +95,13 @@ export type ActionWithThis<
   ) => ReturnType<A[K]>;
 };
 
-type PostMsgWithId<D extends CloneableMessageData = CloneableMessageData> =
-  D extends undefined
-    ? (data?: undefined, transfer?: []) => void
-    : GetTransferables<D, 10> extends null
-      ? (data: Exclude<D, undefined>, transfer?: []) => void
-      : (
-          data: Exclude<D, undefined>,
-          transfer: Transfer<Exclude<D, undefined>, []>
-        ) => void;
+type PostMsgWithId<D extends any = any> = D extends undefined
+  ? (data?: undefined, transfer?: []) => void
+  : (data: Exclude<D, undefined>, transfer?: Transferable[]) => void;
 
 type ActionThis<
   A extends CommonActions = CommonActions,
-  D extends CloneableMessageData = CloneableMessageData,
+  D extends any = any,
 > = {
   $post: PostMsgWithId<D>;
   $end: PostMsgWithId<D>;
@@ -414,7 +295,7 @@ export function createOnmessage<A extends CommonActions>(
 
       // // postMsgWithId 就是 action 中的 this.$post()
       const postMsgWithId: PostMsgWithId = (
-        data?: CloneableMessageData,
+        data?: any,
         transfer: Transferable[] | "auto" = "auto"
       ) => {
         postActionMessage(
@@ -430,7 +311,7 @@ export function createOnmessage<A extends CommonActions>(
 
       // postResultWithId 就是 action 中的 this.$end()
       const postResultWithId: PostMsgWithId = (
-        data?: CloneableMessageData,
+        data?: any,
         transfer: Transferable[] | "auto" = "auto"
       ) => {
         postActionMessage(

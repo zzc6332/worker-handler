@@ -1,4 +1,43 @@
-import { CloneableMessageData } from "./worker";
+type TypedArray =
+  | Int8Array
+  | Uint8Array
+  | Uint8ClampedArray
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | Float32Array
+  | Float64Array
+  | BigInt64Array
+  | BigUint64Array;
+
+type Primitive = number | string | boolean | null | undefined | BigInt | symbol;
+
+type StructuredCloneableError =
+  | Error
+  | EvalError
+  | RangeError
+  | ReferenceError
+  | SyntaxError
+  | TypeError
+  | URIError;
+
+// StructuredCloneable 可以接受一个泛型参数以扩展类型
+export type StructuredCloneable<T = never> =
+  | Exclude<Primitive, symbol>
+  | { [k: string | number]: StructuredCloneable<T> }
+  | Array<StructuredCloneable<T>>
+  | Map<StructuredCloneable<T>, StructuredCloneable<T>>
+  | Set<StructuredCloneable<T>>
+  | ArrayBuffer
+  | Boolean
+  | String
+  | DataView
+  | Date
+  | RegExp
+  | TypedArray
+  | StructuredCloneableError
+  | T;
 
 /**
  * 判断一个数据是否是可转移对象
@@ -186,20 +225,20 @@ export function judgeStructuredCloneable(
  * @param source
  * @returns extracted
  */
-export function getTransfers(source: CloneableMessageData) {
+export function getTransfers(source: StructuredCloneable<Transferable>) {
   const extracted = new Set<Transferable>();
 
   /**
    * 遍历一个可结构化克隆对象，将其中的可转移对象放入到 extractedSet 中
    * @param source
    */
-  function extractTransferableObj(source: CloneableMessageData) {
+  function extractTransferableObj(source: StructuredCloneable<Transferable>) {
     if (judgeTransferableObj(source)) {
       extracted.add(source);
       return;
     }
 
-    const handleItem = (item: CloneableMessageData) => {
+    const handleItem = (item: StructuredCloneable<Transferable>) => {
       if (judgeTransferableObj(item)) {
         extracted.add(item);
       } else {
@@ -218,7 +257,7 @@ export function getTransfers(source: CloneableMessageData) {
       }
     } else if (typeof source === "object" && source !== null) {
       for (const key in source) {
-        const item = (source as any)[key] as CloneableMessageData;
+        const item = (source as any)[key] as StructuredCloneable<Transferable>;
         handleItem(item);
       }
     }
