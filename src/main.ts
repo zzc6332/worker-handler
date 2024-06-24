@@ -1,11 +1,6 @@
-import {
-  CommonActions,
-  MsgFromWorker,
-  ActionResult,
-  CloneableMessageData,
-} from "./worker.js";
+import { CommonActions, MsgFromWorker, GetDataType } from "./worker.js";
 
-import { getTransfers } from "./type-judge";
+import { getTransfers, StructuredCloneable } from "./type-judge";
 
 //#region - types
 
@@ -22,7 +17,7 @@ export interface ProxyContext {
   parentProperty: keyof any | (keyof any)[] | null;
 }
 
-interface ProxyContextPro extends ProxyContext {
+interface ProxyContextX extends ProxyContext {
   revoke: () => void;
 }
 
@@ -100,7 +95,7 @@ export type MsgToWorker<
         ? Pick<MsgToWorkerBasic<T>, "type" | "value">
         : never;
 
-// MsgData 是传递给 messageSource 的数据
+// MsgData 是当接收到 Worker 传递来的 action_data 或 port_proxy 消息后，将其打包处理后的消息
 type MsgData<
   A extends CommonActions,
   D,
@@ -114,14 +109,27 @@ type MsgData<
     ? { readonly proxyTargetId: number }
     : never);
 
-//#endregion
+// ExtendedMsgData 是 MsgData 加工处理后的数据，用于将这些信息合并到 MessageEventX 或 Promise 的结果中
+type ExtendedMsgData<A extends CommonActions, D> = {
+  readonly actionName: keyof A;
+  readonly isProxy: boolean;
+  readonly data: ReceivedData<D>;
+  readonly proxyTargetId: number | undefined;
+};
 
-export type GetDataType<A extends CommonActions, K extends keyof A> =
-  ReturnType<A[K]> extends ActionResult<infer D>
-    ? Exclude<D, void> extends never
-      ? undefined
-      : Exclude<D, void>
-    : CloneableMessageData;
+// 将 Worker 中的 Action 传递的数据的类型 D 转换成 Main 中接收到的数据的类型（如果 D 无法被结构化克隆，则 ReceivedData 会是 Proxy 类型）
+type ReceivedData<D> =
+  D extends StructuredCloneable<Transferable> ? D : ProxyData<D>;
+
+type ProxyData<D> = D extends (...args: any[]) => infer R
+  ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
+  : D extends new (...args: any[]) => infer I
+    ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
+    : D extends object
+      ? { [K in keyof D]: ReceivedData<D[K]> }
+      : PromiseLike<D>;
+
+//#endregion
 
 type ExecuteOptions = {
   transfer: Transferable[] | "auto";
@@ -134,31 +142,29 @@ type ListenerMap = {
   error?: (e: ErrorEvent) => any;
 };
 
-interface ExtendedMessageEvent<A extends CommonActions, D>
-  extends MessageEvent<D>,
-    MsgData<A, D, "message"> {}
+interface MessageEventX<A extends CommonActions, D>
+  extends Omit<MessageEvent, "data">,
+    ExtendedMsgData<A, D> {}
 
 interface MessageSource<D, A extends CommonActions>
   extends Omit<
     MessagePort,
     "addEventListener" | "onmessage" | "onmessageerror"
   > {
-  promise: Promise<MsgData<A, D>>;
+  promise: Promise<ExtendedMsgData<A, D>>;
   readonly readyState: ReadyState["current"];
-  onmessage:
-    | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
-    | null;
+  onmessage: ((this: MessagePort, ev: MessageEventX<A, D>) => any) | null;
   onmessageerror:
-    | ((this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any)
+    | ((this: MessagePort, ev: MessageEventX<A, any>) => any)
     | null;
   addEventListener(
     type: "message",
-    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any,
+    listener: (this: MessagePort, ev: MessageEventX<A, D>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
   addEventListener(
     type: "messageerror",
-    listener: (this: MessagePort, ev: ExtendedMessageEvent<A, any>) => any,
+    listener: (this: MessagePort, ev: MessageEventX<A, any>) => any,
     options?: boolean | AddEventListenerOptions
   ): MessageSource<D, A>;
 }
@@ -275,7 +281,7 @@ export class WorkerHandler<A extends CommonActions> {
     } catch (error) {
       console.error(error);
     }
-    return msgToWorker.executionId
+    return msgToWorker.executionId;
   }
 
   //#endregion
@@ -424,6 +430,19 @@ export class WorkerHandler<A extends CommonActions> {
       this.handleListeners(resultListenerMap);
     });
 
+    const newPromise = promise.then((res) => {
+      if (res.isProxy) {
+        const msgData = res as MsgData<A, D, "proxy">;
+        const data = this.createProxy(
+          msgData.proxyTargetId,
+          Symbol.for("root_proxy")
+        );
+        return { ...res, data } as ExtendedMsgData<A, D>;
+      } else {
+        return res as ExtendedMsgData<A, D>;
+      }
+    });
+
     const clearEffects = () => {
       // 当一个 action 从 Worker 获取到 result 响应（终止消息）时清除副作用，由于此时已经不需要再从 Worker 接收 响应消息了，因此可以立马将 resultListenerMap 和 msgListenerMap 中的监听器全部移除
       this.handleListeners(resultListenerMap, false);
@@ -437,26 +456,16 @@ export class WorkerHandler<A extends CommonActions> {
     };
 
     // 之所以要在 then() 和 catch() 的回调中中分别执行一次 clearEffects()，而不在 finally() 的回调中执行，是为了保证当用户在 promise 的 then() 或 catch() 的回调中访问到的 readyState.current 一定为 2，而 finally() 中的回调的执行晚于 then() 和 catch() 的回调的执行
-    const newPromise = promise
-      .then((res) => {
+    newPromise
+      .then(() => {
         clearEffects();
-        if (res.isProxy) {
-          const msgData = res as MsgData<A, D, "proxy">;
-          const data = this.createProxy(
-            msgData.proxyTargetId,
-            Symbol.for("root_proxy")
-          );
-          return { ...res, data };
-        } else {
-          return res as MsgData<A, D, "message">;
-        }
       })
       .catch(() => {
         clearEffects();
       });
 
     // 返回的这个 promise 会在 this.execute() 中再用于进行一次副作用清理
-    return newPromise as Promise<MsgData<A, D, "message" | "proxy">>;
+    return newPromise;
   }
 
   //#endregion
@@ -470,10 +479,7 @@ export class WorkerHandler<A extends CommonActions> {
    * @returns 还原后的 listener
    */
   private reduceEventListener<A extends CommonActions>(
-    extendedListener: (
-      this: MessagePort,
-      ev: ExtendedMessageEvent<A, any>
-    ) => any,
+    extendedListener: (this: MessagePort, ev: MessageEventX<A, any>) => any,
     receivePort: MessagePort
   ) {
     return async (ev: MessageEvent<MsgData<A, any>>) => {
@@ -590,12 +596,12 @@ export class WorkerHandler<A extends CommonActions> {
 
     const utilsForHandler = {
       /**
-       * 将 ProxyContextPro 精简为 ProxyContext 后返回
-       * @param proxyContext ProxyContextPro 或 undefined
+       * 将 ProxyContextX 精简为 ProxyContext 后返回
+       * @param proxyContext ProxyContextX 或 undefined
        * @returns ProxyContext 或 undefined
        */
       reduceProxyContext(
-        proxyContext: ProxyContextPro | undefined
+        proxyContext: ProxyContextX | undefined
       ): ProxyContext | undefined {
         if (proxyContext) {
           const { proxyTargetId, parentProperty } = proxyContext;
@@ -820,6 +826,10 @@ export class WorkerHandler<A extends CommonActions> {
     this.messageChannelsSet.clear();
   }
 
+  /**
+   * 废除 proxy，并清理 Worker 中对应的数据
+   * @param proxy
+   */
   revokeProxy(proxy: any) {
     const proxyContext = this.proxyWeakMap.get(proxy);
     if (!proxyContext) return;
@@ -838,14 +848,14 @@ export class WorkerHandler<A extends CommonActions> {
    * @param payload action 接收的参数
    * @returns messageSource
    */
-  execute<K extends keyof A, D extends Parameters<A[K]> = Parameters<A[K]>>(
+  execute<K extends keyof A>(
     actionName: K,
     options?:
       | Partial<ExecuteOptions>
       | ExecuteOptions["transfer"]
       | ExecuteOptions["timeout"]
       | null,
-    ...payload: D
+    ...payload: Parameters<A[K]>
   ) {
     let inputedTransfer: ExecuteOptions["transfer"] = "auto";
     let timeout: number = 0;
@@ -860,11 +870,7 @@ export class WorkerHandler<A extends CommonActions> {
     const transfer =
       inputedTransfer === "auto" ? getTransfers(payload) : inputedTransfer;
 
-    const executionId = this.postMsgToWorker(
-      actionName,
-      transfer,
-      ...payload
-    );
+    const executionId = this.postMsgToWorker(actionName, transfer, ...payload);
 
     const readyState: ReadyState = { current: 0 };
 
@@ -901,32 +907,31 @@ export class WorkerHandler<A extends CommonActions> {
     // listenerSet 中存放通过 messageSource.addEventListener() 添加的监听器信息，当本次通信完毕后移除 listenerSet 中的所有监听器
     let listenerSet = new Set<ListenerTuple>();
 
-    const newPromise: Promise<
-      MsgData<A, GetDataType<A, K>, "message" | "proxy">
-    > = new Promise((resolve, reject) => {
-      promise
-        .then((res) => {
-          // 由于 msg 响应（非终止消息）达到 Main 后需要解析后再通过 messageChannel 异步地传递给 messageSource，因此为了确保一个 action 中 result 响应（非终止消息）始终是最后接收到的，该 promise 被异步地 resolve
-          setTimeout(() => {
-            resolve(res);
-          });
-        })
-        .catch((res) => {
-          reject(res);
-        })
-        .finally(() => {
-          // 如果 promise 被 resolve 之前的一瞬间，action 从 Worker 获取到了 msg 响应（非终止消息），那么添加给 receivePort 的监听器还需要用来接收这次消息的数据，因此将移除监听器的操作异步执行
-          setTimeout(() => {
-            listenerSet.forEach((listenerTuple) => {
-              receivePort.removeEventListener(
-                listenerTuple[0],
-                listenerTuple[1]
-              );
+    const newPromise: Promise<ExtendedMsgData<A, GetDataType<A, K>>> =
+      new Promise((resolve, reject) => {
+        promise
+          .then((res) => {
+            // 由于 msg 响应（非终止消息）达到 Main 后需要解析后再通过 messageChannel 异步地传递给 messageSource，因此为了确保一个 action 中 result 响应（非终止消息）始终是最后接收到的，该 promise 被异步地 resolve
+            setTimeout(() => {
+              resolve(res);
             });
-            listenerSet.clear();
+          })
+          .catch((res) => {
+            reject(res);
+          })
+          .finally(() => {
+            // 如果 promise 被 resolve 之前的一瞬间，action 从 Worker 获取到了 msg 响应（非终止消息），那么添加给 receivePort 的监听器还需要用来接收这次消息的数据，因此将移除监听器的操作异步执行
+            setTimeout(() => {
+              listenerSet.forEach((listenerTuple) => {
+                receivePort.removeEventListener(
+                  listenerTuple[0],
+                  listenerTuple[1]
+                );
+              });
+              listenerSet.clear();
+            });
           });
-        });
-    });
+      });
 
     // newPromise.catch(() => {});
 
@@ -959,7 +964,10 @@ export class WorkerHandler<A extends CommonActions> {
       onmessage: {
         set: (
           extendedOnmessage:
-            | ((this: MessagePort, ev: ExtendedMessageEvent<A, D>) => any)
+            | ((
+                this: MessagePort,
+                ev: MessageEventX<A, GetDataType<A, K>>
+              ) => any)
             | null
         ) => {
           if (extendedOnmessage) {
