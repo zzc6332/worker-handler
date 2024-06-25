@@ -79,7 +79,7 @@ export type GetDataType<A extends CommonActions, K extends keyof A> =
 
 //#region  - action 相关
 
-export type ActionResult<D extends any = void> = Promise<D>;
+export type ActionResult<D extends any = void> = Promise<D | void>;
 
 export type CommonActions = {
   [K: string]: (this: ActionThis, ...args: any[]) => ActionResult<any>;
