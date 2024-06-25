@@ -85,17 +85,32 @@ async function execute(caseNames) {
     ).promise,
 
     insert("/demo/demo.main.ts", caseNames)(
-      "// Insert Ports above this line",
+      "// Insert Executors above this line",
       (_, caseName) =>
-        `export const ${caseName}Port = worker.execute("${caseName}");\n`
+        `export const ${caseName}Executor = () => worker.execute("${caseName}");\n`
     ).promise,
 
     insert("/test/main.test.ts", caseNames)(
-      "  // Insert Ports to be imported above this line.",
-      (_, caseName) => `  ${caseName}Port,`
+      "  // Insert Executors to be imported above this line.",
+      (_, caseName) => `  ${caseName}Executor,`
     )(
       "  // Insert test cases above this line.",
-      (_, caseName) => `  it("${caseName}", async function () {\n    const { data } = await ${caseName}Port.promise;\n  });\n`
+      (_, caseName) =>
+        `  describe("${caseName}", function () {
+    let ${caseName}Port: ReturnType<
+      typeof ${caseName}Executor
+    >;
+
+    it("event", function () {
+      ${caseName}Port = ${caseName}Executor();
+
+    });
+
+    it("promise", async function () {
+      const { data } = await ${caseName}Port.promise;
+
+    });
+  });\n`
     ).promise,
   ];
 
