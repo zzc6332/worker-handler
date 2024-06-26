@@ -29,18 +29,20 @@ type MsgToWorkerBasic<
 > = {
   type: T;
   actionName: K;
-  payload: Parameters<A[K]>;
+  payloads: Parameters<A[K]>;
+  payloadProxyContexts: (Parameters<A[K]>[number] | undefined)[];
   executionId: number;
   trap: P;
   proxyTargetId: number;
   getterId: number;
   property: keyof any | (keyof any)[];
   value: any;
+  valueProxyContext?: ProxyContext;
   argumentsList: any[];
   parentProperty: (keyof any)[];
   argProxyContexts: (ProxyContext | undefined)[];
   thisProxyContext?: ProxyContext;
-  thisArg?: any;
+  thisArg: any;
 };
 
 export type MsgToWorker<
@@ -51,7 +53,11 @@ export type MsgToWorker<
 > = T extends "execute_action"
   ? Pick<
       MsgToWorkerBasic<T, A, K>,
-      "type" | "actionName" | "payload" | "executionId"
+      | "type"
+      | "actionName"
+      | "payloads"
+      | "executionId"
+      | "payloadProxyContexts"
     >
   : T extends "handle_proxy"
     ? P extends "get"
@@ -62,7 +68,12 @@ export type MsgToWorker<
       : P extends "set"
         ? Pick<
             MsgToWorkerBasic<T, A, K, P>,
-            "type" | "proxyTargetId" | "trap" | "property" | "value"
+            | "type"
+            | "proxyTargetId"
+            | "trap"
+            | "property"
+            | "value"
+            | "valueProxyContext"
           >
         : P extends "apply"
           ? Pick<
@@ -113,7 +124,8 @@ type MsgData<
 type ExtendedMsgData<A extends CommonActions, D> = {
   readonly actionName: keyof A;
   readonly isProxy: boolean;
-  readonly data: ReceivedData<D>;
+  readonly data: D;
+  // readonly data: ProxyData<D>; // - 未使用
   readonly proxyTargetId: number | undefined;
 };
 
@@ -273,18 +285,24 @@ export class WorkerHandler<A extends CommonActions> {
    * 传递消息传递给 worker，使得 worker 调用 action
    * @param actionName action 的名称
    * @param options 配置选项
-   * @param payload action 接收参数
+   * @param payloads action 接收参数
    * @returns executionId
    */
   private postMsgToWorker<K extends keyof A>(
     actionName: K,
     transfer: Transferable[],
-    ...payload: Parameters<A[K]>
+    ...payloads: Parameters<A[K]>
   ) {
+    const {
+      argProxyContexts: payloadProxyContexts,
+      argumentsList: payloadsList,
+    } = this.utilsForHandler.handleArguments(payloads);
+
     const msgToWorker: MsgToWorker<"execute_action", A, K> = {
       type: "execute_action",
       actionName,
-      payload,
+      payloads: payloadsList,
+      payloadProxyContexts,
       executionId: this.executionId++,
     };
 
@@ -582,14 +600,54 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#endregion
 
+  //#region - UtilsForHandler
+
+  private utilsForHandler: {
+    reduceProxyContext(proxyContext: ProxyContextX): ProxyContext;
+    reduceProxyContext(proxyContext: undefined): undefined;
+    reduceProxyContext(
+      proxyContext: ProxyContextX | undefined
+    ): ProxyContext | undefined;
+    handleArguments(argumentsList: any[]): any;
+  } = {
+    /**
+     * 将 ProxyContextX 精简为 ProxyContext 后返回
+     * @param proxyContext ProxyContextX 或 undefined
+     * @returns ProxyContext 或 undefined
+     */
+    reduceProxyContext(proxyContext: any): any {
+      if (proxyContext) {
+        const { proxyTargetId, parentProperty } = proxyContext;
+        return { proxyTargetId, parentProperty };
+      }
+    },
+    /**
+     * 接收初始的 argumentsList，将其中引用了 Worker 数据的 Proxy 提取并解析后放入 argProxyContexts 中
+     * @param argumentsList
+     * @returns  一个包含 argProxyContexts 和提炼后的 argumentsList 的对象
+     */
+    handleArguments: (argumentsList: any[]) => {
+      const argProxyContexts: (ProxyContext | undefined)[] = [];
+      const newArgumentsList = argumentsList.map((arg, index) => {
+        const argProxyContext = this.proxyWeakMap.get(arg);
+        if (argProxyContext) {
+          const { proxyTargetId, parentProperty } = argProxyContext;
+          argProxyContexts[index] = { proxyTargetId, parentProperty };
+          return null;
+        }
+        return arg;
+      });
+      return { argProxyContexts, argumentsList: newArgumentsList };
+    },
+  };
+
+  //#endregion
+
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
   private proxyGetterId = 0;
 
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
-  private proxyWeakMap = new WeakMap<
-    any,
-    ProxyContext & { revoke: () => void }
-  >();
+  private proxyWeakMap = new WeakMap<any, ProxyContextX>();
 
   //#region - createProxy
 
@@ -606,40 +664,6 @@ export class WorkerHandler<A extends CommonActions> {
     parentProperty: keyof any | (keyof any)[] | null = null
   ) {
     const _this = this;
-
-    const utilsForHandler = {
-      /**
-       * 将 ProxyContextX 精简为 ProxyContext 后返回
-       * @param proxyContext ProxyContextX 或 undefined
-       * @returns ProxyContext 或 undefined
-       */
-      reduceProxyContext(
-        proxyContext: ProxyContextX | undefined
-      ): ProxyContext | undefined {
-        if (proxyContext) {
-          const { proxyTargetId, parentProperty } = proxyContext;
-          return { proxyTargetId, parentProperty };
-        }
-      },
-      /**
-       * 接收初始的 argumentsList，将其中已注册过的 Proxy 提取并解析后放入 argProxyContexts 中
-       * @param argumentsList
-       * @returns  一个包含 argProxyContexts 和提炼后的 argumentsList 的对象
-       */
-      handleArguments(argumentsList: any[]) {
-        const argProxyContexts: (ProxyContext | undefined)[] = [];
-        const newArgumentsList = argumentsList.map((arg, index) => {
-          const argProxyContext = _this.proxyWeakMap.get(arg);
-          if (argProxyContext) {
-            const { proxyTargetId, parentProperty } = argProxyContext;
-            argProxyContexts[index] = { proxyTargetId, parentProperty };
-            return null;
-          }
-          return arg;
-        });
-        return { argProxyContexts, argumentsList: newArgumentsList };
-      },
-    };
 
     const handler: ProxyHandler<any> = {
       get(_target, property, receiver) {
@@ -690,16 +714,6 @@ export class WorkerHandler<A extends CommonActions> {
           return Reflect.set(_target, property, value);
         }
 
-        const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
-          type: "check_clonability",
-          value,
-        };
-        try {
-          _this.worker.postMessage(checkClonabilityMsg);
-        } catch (error) {
-          return false;
-        }
-
         let propertyValue: keyof any | (keyof any)[];
 
         if (parentProperty) {
@@ -715,6 +729,28 @@ export class WorkerHandler<A extends CommonActions> {
           propertyValue = property;
         }
 
+        const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
+          type: "check_clonability",
+          value,
+        };
+        try {
+          _this.worker.postMessage(checkClonabilityMsg);
+        } catch (error) {
+          const valueProxyContextX = _this.proxyWeakMap.get(value);
+          if (valueProxyContextX) {
+            const valueProxyContext =
+              _this.utilsForHandler.reduceProxyContext(valueProxyContextX);
+            return _this.handleProxy({
+              type: "handle_proxy",
+              trap: "set",
+              proxyTargetId,
+              property: propertyValue,
+              value: null,
+              valueProxyContext,
+            });
+          } else return false;
+        }
+
         return _this.handleProxy({
           type: "handle_proxy",
           trap: "set",
@@ -727,11 +763,10 @@ export class WorkerHandler<A extends CommonActions> {
       apply(_, thisArg, _argumentsList) {
         // 处理 thisArg
         const _thisProxyContext = _this.proxyWeakMap.get(thisArg);
-        const { reduceProxyContext } = utilsForHandler;
 
         // 处理 argumentsList
         const { argProxyContexts, argumentsList } =
-          utilsForHandler.handleArguments(_argumentsList);
+          _this.utilsForHandler.handleArguments(_argumentsList);
 
         return _this.handleProxy({
           type: "handle_proxy",
@@ -745,7 +780,8 @@ export class WorkerHandler<A extends CommonActions> {
               : [],
           argumentsList,
           argProxyContexts,
-          thisProxyContext: reduceProxyContext(_thisProxyContext),
+          thisProxyContext:
+            _this.utilsForHandler.reduceProxyContext(_thisProxyContext),
           thisArg: _thisProxyContext ? undefined : thisArg,
         });
       },
@@ -753,7 +789,7 @@ export class WorkerHandler<A extends CommonActions> {
       construct(_, _argumentsList) {
         // 处理 argumentList
         const { argProxyContexts, argumentsList } =
-          utilsForHandler.handleArguments(_argumentsList);
+          _this.utilsForHandler.handleArguments(_argumentsList);
 
         return _this.handleProxy({
           type: "handle_proxy",
@@ -858,7 +894,7 @@ export class WorkerHandler<A extends CommonActions> {
    * 执行一次 action 调用
    * @param actionName action 名称
    * @param options 选项
-   * @param payload action 接收的参数
+   * @param payloads action 接收的参数
    * @returns messageSource
    */
   execute<K extends keyof A>(
@@ -868,7 +904,7 @@ export class WorkerHandler<A extends CommonActions> {
       | ExecuteOptions["transfer"]
       | ExecuteOptions["timeout"]
       | null,
-    ...payload: Parameters<A[K]>
+    ...payloads: Parameters<A[K]>
   ) {
     let inputedTransfer: ExecuteOptions["transfer"] = "auto";
     let timeout: number = 0;
@@ -881,9 +917,9 @@ export class WorkerHandler<A extends CommonActions> {
       timeout = options.timeout || 0;
     }
     const transfer =
-      inputedTransfer === "auto" ? getTransfers(payload) : inputedTransfer;
+      inputedTransfer === "auto" ? getTransfers(payloads) : inputedTransfer;
 
-    const executionId = this.postMsgToWorker(actionName, transfer, ...payload);
+    const executionId = this.postMsgToWorker(actionName, transfer, ...payloads);
 
     const readyState: ReadyState = { current: 0 };
 

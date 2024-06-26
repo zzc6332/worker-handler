@@ -285,7 +285,16 @@ export function createOnmessage<A extends CommonActions>(
 
     if (type === "execute_action") {
       const e = ev as MessageEvent<MsgToWorker<"execute_action", A>>;
-      const { actionName, payload, executionId } = e.data;
+      const { actionName, payloads, executionId, payloadProxyContexts } =
+        e.data;
+      const payloadList = (payloads ? [...payloads] : []) as typeof payloads;
+      if (payloadProxyContexts) {
+        payloadProxyContexts.forEach((payloadProxyContext, index) => {
+          if (payloadProxyContext) {
+            payloadList[index] = getTargetByProxyContext(payloadProxyContext);
+          }
+        });
+      }
 
       const startSignalMsg: MsgFromWorker<"start_signal"> = {
         executionId,
@@ -344,7 +353,7 @@ export function createOnmessage<A extends CommonActions>(
       try {
         const data = await action.apply(
           actionThis as ActionThis<A, GetDataType<A, keyof A>>,
-          payload
+          payloadList
         );
         if (data !== undefined) {
           const transfer = getTransfers(data);
@@ -394,16 +403,22 @@ export function createOnmessage<A extends CommonActions>(
 
         //#region - set trap
       } else if (trap === "set") {
-        const { property, value } = e.data;
+        const { property, value, valueProxyContext } = e.data;
+
+        // 判断 value 是引用了 Worker 数据的 Proxy，还是可结构化克隆的数据
+        const _value = valueProxyContext
+          ? getTargetByProxyContext(valueProxyContext)
+          : value;
+
         const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
         const { target } = proxyTargetTreeNode.value;
         if (!Array.isArray(property)) {
-          Reflect.set(target, property, value);
+          Reflect.set(target, property, _value);
         } else {
           const _target = property
             .slice(0, -1)
             .reduce((prev, cur) => prev[cur], target);
-          Reflect.set(_target, property[property.length - 1], value);
+          Reflect.set(_target, property[property.length - 1], _value);
         }
 
         //#endregion
@@ -414,8 +429,8 @@ export function createOnmessage<A extends CommonActions>(
           getterId,
           parentProperty,
           argumentsList, // argumentsList 中可以被结构化克隆的部分会在这里被接收
-          argProxyContexts, // argumentsList 中如果存在元素是在 Main 中是已注册的 proxy，那么他们会以 ProxyContext 的形式传递到这里
-          thisProxyContext, // thisArg 如果在 Main 中是已注册的 proxy，那么会以 ProxyContext 的形式传递到这里
+          argProxyContexts, // argumentsList 中如果存在元素是在 Main 中是引用了 Worker 数据的 proxy，那么他们会以 ProxyContext 的形式传递到这里
+          thisProxyContext, // thisArg 如果在 Main 中是引用了 Worker 数据的 proxy，那么会以 ProxyContext 的形式传递到这里
           thisArg: _thisArg, // 如果 Main 中传递的 thisArg 可以被结构化克隆，则会在这里被接收到，否则这里的 thisArg 接收 undefined
         } = e.data;
 
@@ -423,7 +438,7 @@ export function createOnmessage<A extends CommonActions>(
 
         let thisArg: any = undefined;
 
-        // 如果 Main 中传递的 thisArg 是已注册的 proxy
+        // 如果 Main 中传递的 thisArg 是引用了 Worker 数据的 proxy
         if (thisProxyContext) {
           thisArg = getTargetByProxyContext(thisProxyContext);
         }
