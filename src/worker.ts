@@ -141,7 +141,18 @@ function postActionMessage(
     if (Proxy) {
       // 无论是根据 judgeStructuredCloneable() 条件抛出的 Error 还是 postMessage() 抛出的 Error 的 message 都会被 reg 匹配到
       const reg = /could not be cloned\.$/;
-      if (reg.test(error?.message)) {
+      const regV = /clone/;
+      const reg2 = /could not be transferred/;
+      const reg2V = /Cannot clone canvas with context./;
+      if (reg2.test(error?.message) || reg2V.test(error?.message)) {
+        console.warn(error);
+      }
+      if (
+        reg.test(error?.message) ||
+        regV.test(error?.message) ||
+        reg2.test(error?.message) ||
+        reg2V.test(error?.message)
+      ) {
         const data: any = message.data;
         const proxyMsg: MsgFromWorker<"port_proxy"> = {
           type: "port_proxy",
@@ -225,7 +236,20 @@ function postProxyData(
   } catch (error: any) {
     // 如果读取到的数据无法被实例化，则继续创建 proxy
     const reg = /could not be cloned\.$/;
-    if (!reg.test(error?.message)) return;
+    const regV = /clone/;
+    const reg2 = /could not be transferred/;
+    const reg2V = /Cannot clone canvas with context./;
+    if (
+      !reg.test(error?.message) &&
+      !regV.test(error?.message) &&
+      !reg2.test(error?.message) &&
+      !reg2V.test(error?.message)
+    )
+      throw error;
+
+    if (reg2.test(error?.message) || reg2V.test(error?.message)) {
+      console.warn(error);
+    }
     const createSubproxyMsg: MsgFromWorker<"create_subproxy"> = {
       type: "create_subproxy",
       proxyTargetId: currentProxyTargetId,
