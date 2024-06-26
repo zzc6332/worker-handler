@@ -62,7 +62,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 
 ## Typescript
 
-`worker-handler` 具有 `typescript` 类型支持。一旦定义了 `Action` 的类型，就可以使得在 `Main` 和 `Worker` 之间传递消息时在发送端和接收端都能得到类型检测和提示，并且可以检测传递的消息是否可以被[结构化克隆算法](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)处理，是否需要处理[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)等。
+`worker-handler` 具有 `typescript` 类型支持。一旦定义了 `Action` 的类型，就可以使得在 `Main` 和 `Worker` 之间传递消息时在发送端和接收端都能得到类型检测和提示。
 
 <span id="ts-example">以下是 `typescript` 中使用 `worker-handler` 的简单示例</span>：
 
@@ -102,7 +102,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
   new Worker(new URL("./demo.worker.ts", import.meta.url))
 );
 
-demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
+demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
   console.log(res.data);
 });
 ~~~
@@ -111,18 +111,25 @@ demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
 
 在 `Main` 中执行 `WorkerHandle` 实例的 `excute()` 会与 `Worker` 产生一个连接，并执行一个 `Action`。
 
-`excute()` 接收的第三个以后的参数会按顺序传递给 `Worker` 中对应的 `Action`。
+`excute()` 接收的第三个以后的参数都是 `payload`，会按顺序传递给 `Worker` 中对应的 `Action`。
 
-第二个参数可以接收一个连接配置选项对象，包含 `transfer` 和 `timeout` 两个属性：
+第二个参数的完整形式是一个连接配置选项对象，包含 `transfer` 和 `timeout` 两个属性：
 
-- `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组。
-- `timeout` 是本次连接的超时时间。超时后该连接将会被关闭，不会再收到任何响应，且 `Action` 返回的 `Promise` 将转变为 `rejected` 状态。
+- `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组，用来指定 `payloads` 中需要转移的可转移对象。
+
+  如果不指定该属性，则 `payloads` 中的可转移对象全部会被自动识别并放入到 `transfer` 数组中。
+
+  如果不需要转移任何对象，则将 `transfer` 设置为 `[]`。
+
+- `timeout` 是本次连接的超时时间。
+
+  超时后该连接将会被关闭，不会再收到任何响应，且 `Action` 返回的 `Promise` 将转变为 `rejected` 状态。
 
 也可以简化传参：
 
 - 如果只需要使用 `transfer`，可以直接传入一个数组。
 - 如果只需要使用 `timeout`，可以直接传入一个数字。
-- 如果都不需要开启，那么可以传入以下任意值：`null`、`undefined`、`[]`、小于或等于 `0` 的任何数字。
+- 如果都不需要开启，那么可以传入以下任意值：`null`、`undefined`、小于或等于 `0` 的任何数字。
 
 ## 消息响应
 
@@ -132,19 +139,15 @@ demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
 
 `EventTarget` 形式的消息响应适用于一次请求会得到多条响应的情况。
 
-### Promise 形式
+### Promise 形式（终止响应）
 
 `Action` 中可以用函数返回值，或调用 `this.$end()` 这两种方式以 `Promise` 形式响应消息。
-
-函数返回值的方式适合当 `Action` 中所有逻辑执行完毕后再做出响应的情况，且可以在箭头函数中使用。
-
-`this.$end()` 方式适合 `Action` 在发出响应后仍需要继续执行的情况，或需要在 `Action` 中的回调函数中发出响应的情况，不支持在箭头函数中使用。
 
 #### 使用函数返回值
 
 在 `Action` 中返回一个 `Promise`，如上面<a href="#basic-example" target="_self">基础示例</a>所示。
 
-如果需要传递 `transfer`，则需要将异步返回值定义为 `[messageData, [...transferable]]` 的形式，例如：
+如果 `return` 的数据中包含[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)，那么当 `Action` 执行时它们会被自动识别并被转移，例如：
 
 ~~~typescript
 // demo.worker.ts
@@ -157,8 +160,8 @@ export type DemoActions = {
 onmessage = createOnmessage<DemoActions>({
   async getOffscreenCanvas() {
     const offscreen = new OffscreenCanvas(0, 0);
-    // 将 offscreen 作为 transfer 传递，之后它在 Worker 中处于 detached 状态，无法再对其进行操作
-    return [offscreen, [offscreen]];
+    // offscreen 会被转移到 Main 中，之后它在 Worker 中处于 detached 状态，无法对其进行操作
+    return offscreen;
   },
 });
 ~~~
@@ -173,29 +176,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
 );
 
 demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
-  console.log(res.data); // offscreen 被转移到了 Main 中
-});
-~~~
-
-❗**注意**：为了兼容要传递 `transfer` 的情况下的写法，如果要传递的消息数据本身是数组，则必须将其以 `[messageData, [...transferable]]` 的形式传递，无论是否需要传递 `transfer`，例如：
-
-~~~typescript
-// demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler/worker";
-
-export type DemoActions = {
-  getRandomNumsInArray: (amount: number) => ActionResult<number[]>;
-};
-
-onmessage = createOnmessage<DemoActions>({
-  async getRandomNumsInArray(amount) {
-    const numsArr = [];
-    for (let i = 0; i < amount; i++) {
-      numsArr.push(Math.round(Math.random() * 100));
-    }
-    // 如果这里返回的是 numsArr，则 TS 类型检测不会通过
-    return [numsArr, []];
-  },
+  console.log(res.data); 
 });
 ~~~
 
@@ -203,7 +184,7 @@ onmessage = createOnmessage<DemoActions>({
 
 在 `Action` 中调用 `this.$end()` 也可以将消息以 `Promise` 的形式传递给 `Main`。
 
-`this.$end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
+`this.$end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是指定要转移的 `transfer`（如果不指定，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
@@ -218,8 +199,7 @@ onmessage = createOnmessage<DemoActions>({
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
 export type DemoActions = {
-  // 这里返回值类型被定义为 ActionResult<string | void>，表示传递的消息类型应为 string，并且该异步函数可能不会显式地返回一个值
-  pingLater: (delay: number) => ActionResult<string | void>;
+  pingLater: (delay: number) => ActionResult<string>;
 };
 
 onmessage = createOnmessage<DemoActions>({
@@ -230,6 +210,32 @@ onmessage = createOnmessage<DemoActions>({
   }
 });
 ~~~
+
+#### 两种发送终止响应方式的对比
+
+使用函数返回值：
+
+- 简洁方便，且支持在箭头函数中使用。
+
+- 具有以下限制：
+
+  - 一旦使用 `return` 之后，`action` 将不会再执行；
+
+  - 无法在 `action` 内部的回调函数中使用；
+
+  - 只能自动识别，无法手动指定要转移的可转移对象。
+
+使用 `this.$end()`：
+
+- 灵活匹配各种场景，体现在：
+
+  - 使用 `this.$end()` 后，`action` 仍可以执行，只是无法再发送响应；
+  
+  - 可以在 `action` 内部的回调函数中使用；
+  
+  - 既可以自动识别，也可以手动指定要转移的可转移对象。
+  
+- 不支持在箭头函数中使用。
 
 #### 响应空数据
 
@@ -269,11 +275,11 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-### <span id="this_post">EventTarget 形式</span>
+### <span id="this_post">EventTarget 形式（非终止响应）</span>
 
 在 `Action` 中调用 `this.$post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
 
-`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`。
+`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`（如果不指定，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
@@ -284,12 +290,12 @@ onmessage = createOnmessage<DemoActions>({
 import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
-  // EventTarget 形式传递的消息类型也通过 Action 的返回值类型定义，ActionResult<string | void> 表示传递的消息类型是 string，并且该异步函数可能不会显式地返回一个值
+  // EventTarget 形式传递的消息类型也通过 Action 的返回值类型定义
   pingInterval: (
     interval: number,
     isImmediate: boolean,
     duration: number
-  ) => ActionResult<string | void>;
+  ) => ActionResult<string>;
 };
 
 // 调用 pingInterval() 后，每隔 interval 毫秒就会发送一次 EventTarget 形式的消息，在 duration 毫秒后会发送 Promise 形式的消息并关闭请求连接
@@ -328,6 +334,86 @@ demoWorker
   });
 ~~~
 
+## <span id="Worker_Proxy">传递无法被结构化克隆的消息</span>
+
+从 `worker-handler v0.2.0` 开始，在支持 [Proxy](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Proxy) 的环境中，可以传递无法被[结构化克隆算法](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)处理的消息。
+
+如果 `Worker` 发送给 `Main` 的数据无法被结构化克隆，那么在 `Main` 中会创建一个引用了该数据的 `Proxy` （以下成为 `Worker Proxy`）作为接收到的数据：
+
+- 可以在 `Main` 中操作 `Worker Proxy` ，`Worker Proxy` 会将这些操作同步给其引用的数据。
+- `Worker Proxy` 目前实现的捕获器有：`get`、`set`、`apply`、`construct`。
+- 由于消息传递是异步的，因此 `get`、`apply`、`construct` 这些会返回结果操作会返回一个 `promise-like` 的新的 `proxy` 对象，表示操作的结果。在支持 `await` 语法的环境中，在对该 `Proxy` 进行（除了 `set` 的）操作前加上 `await` 即可模拟对其引用的数据的操作。
+
+示例：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    f: () => string;
+    count: number;
+    increase: () => void;
+    Person: typeof Person;
+    layer1: { layer2: string; f: () => string };
+  }>;
+};
+
+class Person {
+  constructor(public name: string) {}
+}
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+    const data = {
+      f: () => "result of data.f()",
+      count: 0,
+      increase() {
+        this.count++;
+      },
+      Person,
+      layer1: { layer2: "nested value", f: () => "result of data.layer1.f()" },
+    };
+    return data
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await worker.execute("returnUncloneableData").promise;
+
+  console.log(await data.f()); // "result of data.f()"
+
+  const person = await new data.Person("zzc6332");
+  console.log(await person.name); // "zzc6332"
+
+  console.log(await data.count); // 0
+  await data.increase();
+  console.log(await data.count); // 1
+
+  console.log(await data.layer1.layer2); // "nested value"
+  console.log(await data.layer1.f()); // "result of data.layer1.f()"
+  
+  // 由于 set 操作不需要返回结果，因此前面不加 await
+  data.layer1.layer2 = "Hello Proxy!";
+  console.log(await data.layer1.layer2); // "Hello Proxy!"
+}
+
+init();
+~~~
+
+`Worker Proxy` 可以传递给 `execute()` 的 `payloads` 参数，或通过其它 `Worker Proxy` 调用的方法的参数，这样在 `Worker` 中接收到的将是 `Worker Proxy` 引用的原始数据。
+
 ## API
 
 ### worker-handler/main
@@ -336,7 +422,7 @@ demoWorker
 
 构造函数：
 
-`WorkerHandler` 构造函数接收一个 `Worker` 实例。或者如果环境中能够提供打包后 `Worker` 脚本的路径的 `string` 或 `URL`，则可以将它们传入。返回一个 `WorkerHandler` 实例。
+- `WorkerHandler` 构造函数接收一个 `Worker` 实例。或者如果环境中能够提供打包后 `Worker` 脚本的路径的 `string` 或 `URL`，则可以将它们传入。返回一个 `WorkerHandler` 实例。
 
 实例方法：
 
@@ -354,16 +440,25 @@ demoWorker
 
     执行 `Action` 的选项参数。
 
-    完整写法是传入一个对象，包含 `transfer` 和 `timeout` 属性：
+    完整形式是传入一个对象，包含 `transfer` 和 `timeout` 属性：
 
-    - `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组。如果 `payload` 中存在，则必须将这些可转移对象全部传入到 `transfer` 数组中。
-    - `timeout` 是一个数字，表示本次连接的超时时间的毫秒数。超时后该连接将会被关闭，不会再收到任何响应，且 `Action` 返回的 `Promise` 将转变为 `rejected` 状态。小于或等于 `0` 的数字表示不设置超时时间。
+    - `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组，用来指定 `payloads` 中需要转移的对象。
+
+      如果不指定该属性，则 `payloads` 中的可转移对象全部会被自动识别并放入到 `transfer` 数组中。
+
+      如果不需要转移任何对象，则将 `transfer` 设置为 `[]`。
+
+    - `timeout` 是一个数字，表示本次连接的超时时间的毫秒数。
+
+      超时后该连接将会被关闭，不会再收到任何响应，且 `Action` 返回的 `Promise` 将转变为 `rejected` 状态。
+
+      小于或等于 `0` 的数字表示不设置超时时间。
 
     如果 `transfer` 和 `timeout` 只需要生效一项，则可以将要生效的值直接传给 `options`。
 
-    如果 `transfer` 和 `timeout` 都不需要生效，那么当不需要传递 `payload` 的情况下可以直接不穿值，否则可以传入以下任意值：`null`、`undefined`、`[]`、小于或等于 `0` 的任何数字。
+    如果 `transfer` 和 `timeout` 都不需要生效，那么当不需要传递 `payload` 的情况下可以直接不穿值，否则可以传入以下任意值：`null`、`undefined`、小于或等于 `0` 的任何数字。
 
-  - ...`payload`：
+  - ...`payloads`：
 
     `Action` 执行时需要的参数，按顺序传值。
 
@@ -387,7 +482,7 @@ demoWorker
 
   当 `Action` 中发出了终止响应时，`promise` 会转变为 `fulfilled` 状态并接收响应消息。
 
-  当 `Action` 中抛出错误或 `Action` 发出的终止响应消息无法被结构化克隆时，`proise` 会转变为 `rejected` 状态并接收错误信息。
+  当 `Action` 中抛出错误或 `Action` 发出的终止响应消息无法被结构化克隆，且当前环境不支持 `Proxy` 时，`proise` 会转变为 `rejected` 状态并接收错误信息。
 
   当 `promise` 状态转变时，连接被关闭，`Action` 不会再发出的任何响应消息（包括非终止响应消息）。
 
@@ -399,7 +494,7 @@ demoWorker
 
 - `onmessageerror`：
 
-  当 `Action` 发出的非终止响应消息无法被结构化克隆时会被调用的回调函数。
+  当 `Action` 发出的非终止响应消息无法被结构化克隆，且当前环境不支持 `Proxy` 时，会被调用的回调函数。
 
   在 `typescript` 中，由于在类型检测时就会发现这种情况，因此基本上不需要监听 `messageerror` 事件。
 
@@ -435,6 +530,19 @@ demoWorker
 
 传入的泛型参数同时会影响到 `Action` 中 `this.$post()` 和 `this.$end()` 接收的参数类型。
 
-如果 `Action` 不需要显式返回一个值，则传入的泛型参数需要包含 `void`，如 `ActionResult<string | void>`。
-
 如果不传递任何泛型参数，则等同于 `ActionResult<void>`。
+
+## 重大变更
+
+### `v0.2.0`
+
+- <a href="#Worker_Proxy" target="_self">在支持 Proxy 的环境中，可以传递无法被结构化克隆算法处理的消息。</a>
+
+- 传递消息时，如果没有指定 `transfer` 选项，那么将自动从消息中识别所有的可转移对象放入到 `transfer` 中。
+
+- 在 `Action` 中通过返回值发送终止响应时，取消在 `v0.1.x` 版本中 `[messageData, [...transferable]]` 的返回形式，这意味着如果响应的数据是一个数组，也可以直接将它返回。如果响应的数据中存在可转移对象，那么它们会被自动识别并转移。
+
+  这是因为，如果使用 `$this.end()` 形式发送终止响应，可以更直观地指定 `transfer`，并且使用返回值形式能做到的，使用 `$this.end()` 都能做到。因此简化了返回值形式的使用方式，使得在一些场景下可以更方便地使用返回值形式发送终止响应。
+
+- `ActionResult<Data>`  等同于 `v0.1.x` 版本中的 `ActionResult<Data | void>`。
+

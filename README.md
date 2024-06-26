@@ -62,7 +62,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 
 ## Typescript
 
-`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and reveiving ends when passing messages between `Main` and `Worker`. It also be able to detect whether the passed message can be processed by [the structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm), and whether there are [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) contained in the message.
+`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and reveiving ends when passing messages between `Main` and `Worker`. 
 
 <span id="ts-example">The following is a simple example of using `worker-handler` in typescript:</span>
 
@@ -106,7 +106,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
   new Worker(new URL("./demo.worker.ts", import.meta.url))
 );
 
-demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
+demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
   console.log(res.data);
 });
 ~~~
@@ -115,18 +115,25 @@ demoWorker.execute("pingLater", [], 1000).promise.then((res) => {
 
 Calling `excute()` of a `WorkerHandle` instance in `Main` will create a connection with `Worker` and call an `Action`.
 
-The parameters received by `excute()` from the third one onwards will be passed to the target `Action` in `Worker` in order.
+The parameters received by `excute()` from the third one onwards are all `payloads`, which will be passed to the target `Action` in `Worker` in order.
 
-The second parameter can accept an object about connection configuration option, which contains two properties: `transfer` and `timeout`:
+The full form of the second parameter is an object about connection configuration option, which contains two properties: `transfer` and `timeout`:
 
-- The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) whose ownership will be transferred to `Worker`.
-- The value of `timeout` is the timeout duration for this connection. After the timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by `Action` will become `rejected`.
+- The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
+
+  If this property is not specified, all `transferable objects` in `payloads` will be automatically identified and placed into the `transfer` array.
+
+  If there is no need to transfer any objects, then set `transfer` to `[]`.
+
+- The value of `timeout` is the timeout duration for this connection.
+
+   After the timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by `Action` will become `rejected`.
 
 Parameter passing can also be simplified according to follow situations:
 
 - If only `transfer` is needed, an array can be directly passed.
 - If only `timeout` is needed, a number can be directly passed.
-- If neither is needed, any of the following values can be passed: `null`, `undefined`, `[]`, or any number less than or equal to `0`.
+- If neither is needed, any of the following values can be passed: `null`, `undefined`, any number less than or equal to `0`.
 
 ## Responding Messages
 
@@ -136,19 +143,15 @@ Responding through `Promise` is suitable for situations where one request corres
 
 Responding through `EventTarget` is suitable for situations where one request will recieve multiple responses.
 
-### Responding through `Promise`
+### Responding through `Promise` (`terminating responses`)
 
 In `Actions`, you can respond to messages through `Promise` either by using return value of the `Action` or by calling `this.$end()`.
-
-Using return value of the `Action` is suitable when the response should be made after the `Action` has been totally executed , and it can be used in arrow functions.
-
-Calling `this.$end()` is suitable for situations where the `Action` needs to continue executing after making a response, or when a response needs to be made within a callback function within the `Action`. But it does not support use in arrow functions.
 
 #### Using return value of the `Action`
 
 Return a `Promise` in an `Action`，as shown in the <a href="#basic-example" target="_self">basic example</a>.
 
-If a `transfer` needs to be passed, the asynchronous return value should be defined in the form of `[messageData, [...transferable]]`, for example:
+If the data returned contains [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects), then they will be automatically identified and transferred when the `Action` is executed, for example:
 
 ~~~typescript
 // demo.worker.ts
@@ -161,8 +164,8 @@ export type DemoActions = {
 onmessage = createOnmessage<DemoActions>({
   async getOffscreenCanvas() {
     const offscreen = new OffscreenCanvas(0, 0);
-    // Pass the `offscreen` as a `transfer`, after which it is detached in `Worker` and cannot be operated on anymore.
-    return [offscreen, [offscreen]];
+    // `offscreen` will be transferred to `Main`, after which it is detached in `Worker` and cannot be operated on.
+    return offscreen;
   },
 });
 ~~~
@@ -177,29 +180,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
 );
 
 demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
-  console.log(res.data); // The `offscreen` has been transferred to `Main`.
-});
-~~~
-
-❗**Note**: For compatibility with the situations when passing `transfer`, if the message data to be passed is an array, it must be passed in the form of `[messageData, [...transferable]]`, even if there is no `transfer` needs to be passed, for example:
-
-~~~typescript
-// demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler/worker";
-
-export type DemoActions = {
-  getRandomNumsInArray: (amount: number) => ActionResult<number[]>;
-};
-
-onmessage = createOnmessage<DemoActions>({
-  async getRandomNumsInArray(amount) {
-    const numsArr = [];
-    for (let i = 0; i < amount; i++) {
-      numsArr.push(Math.round(Math.random() * 100));
-    }
-    // Typescript type detection will not pass if content in this line is "return numsArr".
-    return [numsArr, []];
-  },
+  console.log(res.data);
 });
 ~~~
 
@@ -207,7 +188,7 @@ onmessage = createOnmessage<DemoActions>({
 
 Calling `this.$end()` within `Action` can also pass the message to `Main` through `Promise`.
 
-The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (if not specified, then all transferable objects in the message will be automatically identified and placed into `transfer`).
 
 ❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$end()` needs to be called.
 
@@ -222,8 +203,7 @@ For instance, in the <a href="#ts-example" target="_self">Typescript example abo
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
 export type DemoActions = {
-  // The return type is defined as `ActionResult<string | void>` here, which means that the message type passed should be `string`, and this asynchronous function may not return a value explicitly.
-  pingLater: (delay: number) => ActionResult<string | void>;
+  pingLater: (delay: number) => ActionResult<string>;
 };
 
 onmessage = createOnmessage<DemoActions>({
@@ -234,6 +214,24 @@ onmessage = createOnmessage<DemoActions>({
   }
 });
 ~~~
+
+#### Comparison of two ways to send `terminating responses`
+
+Using the function return value:
+
+- It's concise and convenient, and supports use in arrow functions.
+- It has following limitations:
+  - Once `return` is used, the `action` will not execute further.
+  - It cannot be used within the callback functions of `action`.
+  - It can only automatically identify, but cannot manually specify the `transferable objects` to be transferred.
+
+Using `this.$end()`:
+
+- It can flexibly match various situations, as reflected in:
+  - After using `this.$end()`, the `action` can still execute further, but no further responses can be sent.
+  - It can be used within the callback functions of `action`.
+  - It can both automatically identify and manually specify the `transferable objects` to be transferred.
+- It does not support use in arrow functions.
 
 #### Responding without data
 
@@ -272,11 +270,11 @@ onmessage = createOnmessage<DemoActions>({
 });
 ~~~
 
-### <span id="this_post">Responding through `EventTarget`</span>
+### <span id="this_post">Responding through `EventTarget` (`nonterminating responses`)</span>
 
 Calling `this.$post()` within `Action` can pass the message to `Main` through `EventTarget`.
 
-The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer`.
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (if not specified, then all transferable objects in the message will be automatically identified and placed into `transfer`).
 
 ❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$post()` needs to be called.
 
@@ -287,12 +285,12 @@ Once `this.$post()` is called correctly in the `Action`, it will immediately tri
 import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
-  // The type of the message which is passed through the `EventTarget` is also defined by the return type of the `Action`, `ActionResult<string | void>` means that the message type should be a string, and this asynchronous function may not return a value explicitly.
+  // The type of the message which is passed through the `EventTarget` is also defined by the return type of the `Action`.
   pingInterval: (
     interval: number,
     isImmediate: boolean,
     duration: number
-  ) => ActionResult<string | void>;
+  ) => ActionResult<string>;
 };
 
 // After calling `pingInterval()`, a message will be posted every `interval` ms through `EventTarget`, and after `duration` ms, a message will be posted through `Promise` and the request connection will be closed.
@@ -332,6 +330,84 @@ demoWorker
   });
 ~~~
 
+## <span id="Worker_Proxy">Passing Messages That Cannot Be Structured Cloned</span>
+
+Starting from `worker-handler v0.2.0`, in environments that support [Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy), messages that cannot be handled by the [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) is also allowed to be passed.
+
+If the data sent by `Worker` to `Main` cannot be structured cloned, then a `Proxy` that references this data (hereinafter referred to as `Worker Proxy`) will be created in `Main` as the received data:
+
+- It is possible to operate on `Worker Proxy` in `Main`, and `Worker Proxy` will update these operations to its referenced data.
+- The currently implemented `traps` for `Worker Proxy` are: `get`, `set`, `apply`, `construct`.
+- Since message passing is asynchronous, operations that return results such as `get`, `apply`, `construct` will return a new `promise-like` proxy object, representing the result of the operation. In environments that support the `await` syntax, adding `await` before operating on the `Proxy` (except for `set`) can simulate operations on its referenced data.
+
+For example:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    f: () => string;
+    count: number;
+    increase: () => void;
+    Person: typeof Person;
+    layer1: { layer2: string; f: () => string };
+  }>;
+};
+
+class Person {
+  constructor(public name: string) {}
+}
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+    const data = {
+      f: () => "result of data.f()",
+      count: 0,
+      increase() {
+        this.count++;
+      },
+      Person,
+      layer1: { layer2: "nested value", f: () => "result of data.layer1.f()" },
+    };
+    return data
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await worker.execute("returnUncloneableData").promise;
+
+  console.log(await data.f()); // "result of data.f()"
+
+  const person = await new data.Person("zzc6332");
+  console.log(await person.name); // "zzc6332"
+
+  console.log(await data.count); // 0
+  await data.increase();
+  console.log(await data.count); // 1
+
+  console.log(await data.layer1.layer2); // "nested value"
+  console.log(await data.layer1.f()); // "result of data.layer1.f()"
+  
+  // Since the set operation does not require a reurn result, therefore no await is added in front.
+  data.layer1.layer2 = "Hello Proxy!";
+  console.log(await data.layer1.layer2); // "Hello Proxy!"
+}
+
+init();
+~~~
+
 ## API
 
 ### worker-handler/main
@@ -340,7 +416,7 @@ demoWorker
 
 Constructor:
 
-The `WorkerHandler` constructor receives an instance of `Worker`. Alternatively, if the environment can provide a `string` or `URL` representing the path to the bundled `Worker` script, it can be passed in. The constructor returns an instance of `WorkerHandler`. 
+- The `WorkerHandler` constructor receives an instance of `Worker`. Alternatively, if the environment can provide a `string` or `URL` representing the path to the bundled `Worker` script, it can be passed in. The constructor returns an instance of `WorkerHandler`. 
 
 Instance methods:
 
@@ -360,14 +436,23 @@ Instance methods:
 
     The complete form of `options` is an object that includes the `transfer` and the `timeout` properties:
 
-    - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`. If there are any transferable objects in the `payload`, they must all be passed into the `transfer` array.
-    - The value of `timeout` is a number of milliseconds representing the timeout duration for this connection. After the specified timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by the `Action` will become `rejected`. A number less than or equal to `0` means no timeout.
+    - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
+
+      If this property is not specified, all `transferable objects` in `payloads` will be automatically identified and placed into the `transfer` array.
+
+      If there is no need to transfer any objects, then set `transfer` to `[]`.
+
+    - The value of `timeout` is a number of milliseconds representing the timeout duration for this connection. 
+
+      After the specified timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by the `Action` will become `rejected`.
+
+       A number less than or equal to `0` means no timeout.
 
     If only one of `transfer` or `timeout` needs to take effect, you can directly pass the  value of the one you need to the `options`.
 
-    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, `[]`, or any number less than or equal to `0`. 
+    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, any number less than or equal to `0`. 
 
-  - ...`payload`:
+  - ...`payloads`:
 
     The parameters required for the calling of the target `Action`, passed in sequence.
 
@@ -389,21 +474,21 @@ Properties:
 
   A `Promise` object.
 
-  When a terminating response is made in `Action`, the `promise` will become `fulfilled` and receive the response message.
+  When a `terminating response` is made in `Action`, the `promise` will become `fulfilled` and receive the response message.
 
-  If an error is thrown in `Action` or the terminating response message made by `Action` cannot be structured cloned, the `promise` will become `rejected` and receive the error.
+  If an error is thrown in `Action` or the `terminating response` message made by `Action` cannot be structured cloned, and the current environment does not support `Proxy`, the `promise` will become `rejected` and receive the error message.
 
-  When the `promise` is settled, the connection is closed, and `Action` will not make any more response messages (including non-terminating response messages).
+  When the `promise` is settled, the connection is closed, and `Action` will not make any more response messages (including `non-terminating response` messages).
 
 - `onmessage`:
 
-  A callback function that is called when `Action` makes a non-terminating response message. 
+  A callback function that is called when `Action` makes a `non-terminating response` message. 
 
-  It receives a parameter `e`, through which the non-terminating response message made by `Action` can be accessed via `e.data`.
+  It receives a parameter `e`, through which the `non-terminating response` message made by `Action` can be accessed via `e.data`.
 
 - `onmessageerror`:
 
-  A callback function that is called when the non-terminating response message made by `Action` cannot be structured cloned.
+  A callback function that is called when the `non-terminating response` message made by `Action` cannot be structured cloned  and the current environment does not support `Proxy`.
 
   In `typescript`, this situation is usually detected during type checking, so there is generally no need to listen for the `messageerror` event.
 
@@ -429,7 +514,7 @@ Methods:
 
 Define `Actions` within an object, which is passed to the `createOnmessage()` when called, and return a listener function for the `message` event of `Worker`.
 
-Use `this.$post()` within `Action` to make non-terminating responses, and use `this.$end()` or return a value to make terminating responses.
+Use `this.$post()` within `Action` to make `non-terminating responses`, and use `this.$end()` or return a value to make `terminating responses`.
 
 #### ActionResult
 
@@ -439,6 +524,18 @@ When defining the `Action` type, `ActionResult` is required to generate the type
 
 The generic parameter passed also affects the types of parameters received by `this.$post()` and `this.$end()` within the `Action`.
 
-If the `Action` does not need to return a value explicitly, the generic parameter passed should include `void`, such as `ActionResult<string | void>`.
-
 If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
+
+## Significant Updates
+
+### `v0.2.0`
+
+- <a href="#Worker_Proxy" target="_self">In environments that support Proxy, messages that cannot be handled by the structured clone algorithm can also be passed.</a>
+
+- When passing messages, if the `transfer` option is not specified, all `transferable objects` will be automatically identified from the message and placed into `transfer`.
+
+- When sending a `terminating response` through the return value of `Action`, the return form of `[messageData, [...transferable]]` from version `v0.1.x` is discontinued. This means that if the response data is an array, it can also be returned directly. If there are `transferable objects` in the response data, they will be automatically identified and transferred.
+
+  It is because if using `this.$end()` form to send a `terminating response`, `transfer` can be specified more intuitively, and everything that can be done using the return value form can also be done using `this.$end()`. Therefore, the use of the return value form has been simplified, making it more convenient to use in some situations to send `terminating responses`.
+
+- `ActionResult<Data>` is equivalent to `ActionResult<Data | void>` from version `v0.1.x`.
