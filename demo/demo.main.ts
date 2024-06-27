@@ -1,7 +1,7 @@
 import { WorkerHandler } from "src/main";
 import { DemoActions } from "./demo.worker";
 
-export const worker = new WorkerHandler<DemoActions>(
+const worker = new WorkerHandler<DemoActions>(
   new Worker(new URL("./demo.worker", import.meta.url))
 );
 
@@ -25,4 +25,21 @@ export const receiveAndReturnOffscreenCanvas2Executor = () =>
 export const returnUncloneableDataExecutor = () =>
   worker.execute("returnUncloneableData");
 
+export const returnUncloneableDataWithOffscreenCanvasExecutor = () =>
+  worker.execute("returnUncloneableDataWithOffscreenCanvas");
+
+export const receiveProxyDataExecutor = (data: {
+  f: () => void;
+  offscreen: OffscreenCanvas;
+  imageBitmap: ImageBitmap | null;
+}) => worker.execute("receiveProxyData", 0, data);
+
+export const receiveProxyData2Executor = (data: {
+  f: () => void;
+  offscreen: OffscreenCanvas;
+  imageBitmap: ImageBitmap | null;
+}) => worker.execute("receiveProxyData2", 0, data);
+
 // Insert Executors above this line
+
+export default worker;

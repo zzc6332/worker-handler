@@ -26,8 +26,26 @@ export type DemoActions = {
     count: number;
     increase: () => void;
     Person: typeof Person;
-    layer1: { layer2: string; f: () => void };
+    layer1: { layer2: string; f: () => string };
   }>;
+
+  returnUncloneableDataWithOffscreenCanvas: () => ActionResult<{
+    f: () => void;
+    offscreen: OffscreenCanvas;
+    imageBitmap: ImageBitmap | null;
+  }>;
+
+  receiveProxyData: (data: {
+    f: () => void;
+    offscreen: OffscreenCanvas;
+    imageBitmap: ImageBitmap | null;
+  }) => ActionResult<boolean>;
+
+  receiveProxyData2: (data: {
+    f: () => void;
+    offscreen: OffscreenCanvas;
+    imageBitmap: ImageBitmap | null;
+  }) => ActionResult<boolean>;
 
   // Insert ActionTypes above this line
 };
@@ -70,18 +88,39 @@ onmessage = createOnmessage<DemoActions>({
 
   async returnUncloneableData() {
     const data = {
-      f: () => "result of data.f",
+      f: () => "result of data.f()",
       count: 0,
       increase() {
         this.count++;
       },
       Person,
-      layer1: { layer2: "nested value", f: () => {} },
+      layer1: {
+        layer2: "nested value",
+        f: () => "result of data.layer1.f()",
+      },
     };
     this.$post(data);
     setTimeout(() => {
       this.$end(data);
     }, 500);
+  },
+
+  async returnUncloneableDataWithOffscreenCanvas() {
+    const offscreen = new OffscreenCanvas(1, 1);
+    offscreen.getContext("2d");
+    this.$end({ f: () => {}, offscreen, imageBitmap: null });
+  },
+
+  async receiveProxyData(data) {
+    return (
+      typeof data.f === "function" &&
+      data.imageBitmap instanceof ImageBitmap &&
+      data.offscreen instanceof OffscreenCanvas
+    );
+  },
+
+  async receiveProxyData2(data) {
+    return this.receiveProxyData(data);
   },
 
   // Insert Actions above this line

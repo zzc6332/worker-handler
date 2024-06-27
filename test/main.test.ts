@@ -1,6 +1,5 @@
 import { expect } from "chai";
-import {
-  worker,
+import worker, {
   pingIntervalExecutor,
   pingLaterExecutor,
   returnVoidExecutor,
@@ -8,6 +7,9 @@ import {
   receiveAndReturnOffscreenCanvas1Executor,
   receiveAndReturnOffscreenCanvas2Executor,
   returnUncloneableDataExecutor,
+  returnUncloneableDataWithOffscreenCanvasExecutor,
+  receiveProxyDataExecutor,
+  receiveProxyData2Executor,
   // Insert Executors to be imported above this line.
 } from "demo/demo.main";
 
@@ -142,15 +144,19 @@ describe("actions", function () {
         returnUncloneableDataPort.addEventListener("message", async (e) => {
           const { data } = e;
           try {
-            expect(await data.f()).to.equal("result of data.f");
+            expect(await data.f()).to.equal("result of data.f()");
             const f = data.f;
-            expect(await f()).to.equal("result of data.f");
+            expect(await f()).to.equal("result of data.f()");
 
             expect(await data.count).to.equal(0);
             await data.increase();
             expect(await data.count).to.equal(1);
 
-            expect(await data.layer1.layer2).to.equal("nested value");
+            // expect(await data.layer1.layer2).to.equal("nested value");
+            expect(await data.layer1.f()).to.equal("result of data.layer1.f()");
+
+            data.layer1.layer2 = "Hello Proxy!";
+            expect(await data.layer1.layer2).to.equal("Hello Proxy!");
 
             resolve();
           } catch (error) {
@@ -163,15 +169,71 @@ describe("actions", function () {
     it("promise", async function () {
       const { data } = await returnUncloneableDataPort.promise;
 
-      expect(await data.f()).to.equal("result of data.f");
+      expect(await data.f()).to.equal("result of data.f()");
       const f = data.f;
-      expect(await f()).to.equal("result of data.f");
+      expect(await f()).to.equal("result of data.f()");
 
       expect(await data.count).to.equal(1);
       await data.increase();
       expect(await data.count).to.equal(2);
 
-      expect(await data.layer1.layer2).to.equal("nested value");
+      expect(await data.layer1.layer2).to.equal("Hello Proxy!");
+      expect(await data.layer1.f()).to.equal("result of data.layer1.f()");
+    });
+  });
+
+  let dataOfReturnUncloneableDataWithTranserableObj: {
+    f: () => void;
+    offscreen: OffscreenCanvas;
+    imageBitmap: ImageBitmap | null;
+  };
+
+  describe("returnUncloneableDataWithTranserableObj", function () {
+    let returnUncloneableDataWithOffscreenCanvasPort: ReturnType<
+      typeof returnUncloneableDataWithOffscreenCanvasExecutor
+    >;
+
+    it("event", function () {
+      returnUncloneableDataWithOffscreenCanvasPort =
+        returnUncloneableDataWithOffscreenCanvasExecutor();
+    });
+
+    it("promise", async function () {
+      const { data } =
+        await returnUncloneableDataWithOffscreenCanvasPort.promise;
+
+      data.imageBitmap = await data.offscreen.transferToImageBitmap();
+      dataOfReturnUncloneableDataWithTranserableObj = data;
+    });
+  });
+
+  describe("receiveProxyData", function () {
+    let receiveProxyDataPort: ReturnType<typeof receiveProxyDataExecutor>;
+
+    it("event", function () {
+      receiveProxyDataPort = receiveProxyDataExecutor(
+        dataOfReturnUncloneableDataWithTranserableObj
+      );
+    });
+
+    it("promise", async function () {
+      const { data } = await receiveProxyDataPort.promise;
+      expect(data).to.equal(true);
+    });
+  });
+
+  describe("receiveProxyData2", function () {
+    let receiveProxyData2Port: ReturnType<typeof receiveProxyData2Executor>;
+
+    it("event", function () {
+      receiveProxyData2Port = receiveProxyData2Executor(
+        dataOfReturnUncloneableDataWithTranserableObj
+      );
+    });
+
+    it("promise", async function () {
+      const { data } = await receiveProxyData2Port.promise;
+      expect(data).to.equal(true);
     });
   });
 
