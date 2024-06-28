@@ -906,14 +906,14 @@ export class WorkerHandler<A extends CommonActions> {
       | null,
     ...payloads: Parameters<A[K]>
   ) {
-    let inputedTransfer: ExecuteOptions["transfer"] = "auto";
+    let inputedTransfer: ExecuteOptions["transfer"] = [];
     let timeout: number = 0;
     if (Array.isArray(options) || options === "auto") {
       inputedTransfer = options;
     } else if (typeof options === "number") {
       timeout = options;
     } else if (typeof options === "object" && options !== null) {
-      inputedTransfer = options.transfer || "auto";
+      inputedTransfer = options.transfer || [];
       timeout = options.timeout || 0;
     }
     const transfer =
