@@ -13,11 +13,7 @@ export type DemoActions = {
 
   returnNull: () => ActionResult<null>;
 
-  receiveAndReturnOffscreenCanvas1: (
-    offscreen: OffscreenCanvas
-  ) => ActionResult<OffscreenCanvas>;
-
-  receiveAndReturnOffscreenCanvas2: (
+  receiveAndReturnOffscreenCanvas: (
     offscreen: OffscreenCanvas
   ) => ActionResult<OffscreenCanvas>;
 
@@ -78,12 +74,8 @@ onmessage = createOnmessage<DemoActions>({
     return null;
   },
 
-  async receiveAndReturnOffscreenCanvas1(offscreen) {
+  async receiveAndReturnOffscreenCanvas(offscreen) {
     this.$end(offscreen, [offscreen]);
-  },
-
-  async receiveAndReturnOffscreenCanvas2(offscreen) {
-    return offscreen;
   },
 
   async returnUncloneableData() {

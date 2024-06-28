@@ -14,13 +14,9 @@ export const returnVoidExecutor = () => worker.execute("returnVoid");
 
 export const returnNullExecutor = () => worker.execute("returnNull");
 
-const offset1 = new OffscreenCanvas(0, 0);
-export const receiveAndReturnOffscreenCanvas1Executor = () =>
-  worker.execute("receiveAndReturnOffscreenCanvas1", [offset1], offset1);
-
-const offset2 = new OffscreenCanvas(0, 0);
-export const receiveAndReturnOffscreenCanvas2Executor = () =>
-  worker.execute("receiveAndReturnOffscreenCanvas2", [offset2], offset2);
+const offscreen = new OffscreenCanvas(0, 0);
+export const receiveAndReturnOffscreenCanvasExecutor = () =>
+  worker.execute("receiveAndReturnOffscreenCanvas", [offscreen], offscreen);
 
 export const returnUncloneableDataExecutor = () =>
   worker.execute("returnUncloneableData");
