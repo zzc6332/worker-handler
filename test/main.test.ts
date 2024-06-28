@@ -4,8 +4,7 @@ import worker, {
   pingLaterExecutor,
   returnVoidExecutor,
   returnNullExecutor,
-  receiveAndReturnOffscreenCanvas1Executor,
-  receiveAndReturnOffscreenCanvas2Executor,
+  receiveAndReturnOffscreenCanvasExecutor,
   returnUncloneableDataExecutor,
   returnUncloneableDataWithOffscreenCanvasExecutor,
   receiveProxyDataExecutor,
@@ -94,37 +93,18 @@ describe("actions", function () {
     });
   });
 
-  describe("receiveAndReturnOffscreenCanvas1", function () {
+  describe("receiveAndReturnOffscreenCanvas", function () {
     let receiveAndReturnOffscreenCanvas1Port: ReturnType<
-      typeof receiveAndReturnOffscreenCanvas1Executor
+      typeof receiveAndReturnOffscreenCanvasExecutor
     >;
 
     it("event", function () {
       receiveAndReturnOffscreenCanvas1Port =
-        receiveAndReturnOffscreenCanvas1Executor();
+        receiveAndReturnOffscreenCanvasExecutor();
     });
 
     it("promise", async function () {
       const { data } = await receiveAndReturnOffscreenCanvas1Port.promise;
-      expect(data instanceof OffscreenCanvas).to.equal(true);
-
-      const typeCheck: IsEqual<typeof data, OffscreenCanvas> = true;
-      expect(typeCheck).to.equal(true);
-    });
-  });
-
-  describe("receiveAndReturnOffscreenCanvas2", function () {
-    let receiveAndReturnOffscreenCanvas2Port: ReturnType<
-      typeof receiveAndReturnOffscreenCanvas2Executor
-    >;
-
-    it("event", function () {
-      receiveAndReturnOffscreenCanvas2Port =
-        receiveAndReturnOffscreenCanvas2Executor();
-    });
-
-    it("promise", async function () {
-      const { data } = await receiveAndReturnOffscreenCanvas2Port.promise;
       expect(data instanceof OffscreenCanvas).to.equal(true);
 
       const typeCheck: IsEqual<typeof data, OffscreenCanvas> = true;

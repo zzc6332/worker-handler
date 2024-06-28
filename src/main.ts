@@ -666,7 +666,9 @@ export class WorkerHandler<A extends CommonActions> {
     const _this = this;
 
     const handler: ProxyHandler<any> = {
-      get(_target, property, receiver) {
+      get(_target, property) {
+        if (typeof property === "symbol") return;
+
         if (
           (target === Symbol.for("root_proxy") ||
             target === Symbol.for("sub_proxy")) &&
@@ -682,8 +684,6 @@ export class WorkerHandler<A extends CommonActions> {
             return value;
           }
         }
-
-        if (typeof property === "symbol") return receiver[property];
 
         let propertyValue: keyof any | (keyof any)[];
 
@@ -906,14 +906,14 @@ export class WorkerHandler<A extends CommonActions> {
       | null,
     ...payloads: Parameters<A[K]>
   ) {
-    let inputedTransfer: ExecuteOptions["transfer"] = "auto";
+    let inputedTransfer: ExecuteOptions["transfer"] = [];
     let timeout: number = 0;
     if (Array.isArray(options) || options === "auto") {
       inputedTransfer = options;
     } else if (typeof options === "number") {
       timeout = options;
     } else if (typeof options === "object" && options !== null) {
-      inputedTransfer = options.transfer || "auto";
+      inputedTransfer = options.transfer || [];
       timeout = options.timeout || 0;
     }
     const transfer =

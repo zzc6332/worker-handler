@@ -228,7 +228,7 @@ function postProxyData(
     ? parentProxyTargetTreeNode.value.transfer.filter((item) =>
         judgeContainer(data, item)
       )
-    : getTransfers(data);
+    : [];
   try {
     if (!judgeStructuredCloneable(proxyDataMsg))
       throw new Error("could not be cloned.");
@@ -329,7 +329,7 @@ export function createOnmessage<A extends CommonActions>(
       // // postMsgWithId 就是 action 中的 this.$post()
       const postMsgWithId: PostMsgWithId = (
         data?: any,
-        transfer: Transferable[] | "auto" = "auto"
+        transfer: Transferable[] | "auto" = []
       ) => {
         postActionMessage(
           {
@@ -345,7 +345,7 @@ export function createOnmessage<A extends CommonActions>(
       // postResultWithId 就是 action 中的 this.$end()
       const postResultWithId: PostMsgWithId = (
         data?: any,
-        transfer: Transferable[] | "auto" = "auto"
+        transfer: Transferable[] | "auto" = []
       ) => {
         postActionMessage(
           {
@@ -380,16 +380,12 @@ export function createOnmessage<A extends CommonActions>(
           payloadList
         );
         if (data !== undefined) {
-          const transfer = getTransfers(data);
-          postActionMessage(
-            {
-              data,
-              executionId,
-              done: true,
-              type: "action_data",
-            },
-            transfer
-          );
+          postActionMessage({
+            data,
+            executionId,
+            done: true,
+            type: "action_data",
+          });
         }
       } catch (error: any) {
         if (
