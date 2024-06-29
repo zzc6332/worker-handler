@@ -117,23 +117,21 @@ Calling `excute()` of a `WorkerHandle` instance in `Main` will create a connecti
 
 The parameters received by `excute()` from the third one onwards are all `payloads`, which will be passed to the target `Action` in `Worker` in order.
 
-The full form of the second parameter is an object about connection configuration option, which contains two properties: `transfer` and `timeout`:
+The second parameter is an object that specifies connection configuration options, which contains two properties named `transfer` and `timeout`:
 
 - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
 
-  If this property is not specified, all `transferable objects` in `payloads` will be automatically identified and placed into the `transfer` array.
-
-  If there is no need to transfer any objects, then set `transfer` to `[]`.
+  If the value of `transfer` is `"auto"`, then the `transferable objects` in `payloads` wil be automatically identified.
 
 - The value of `timeout` is the timeout duration for this connection.
 
    After the timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by `Action` will become `rejected`.
 
-Parameter passing can also be simplified according to follow situations:
+The passing of the second parameter can also be simplified according to follow situations:
 
 - If only `transfer` is needed, an array can be directly passed.
 - If only `timeout` is needed, a number can be directly passed.
-- If neither is needed, any of the following values can be passed: `null`, `undefined`, any number less than or equal to `0`.
+- If neither is needed, any of the following values can be passed: `null`, `undefined`, `[]`, any number less than or equal to `0`.
 
 ## Responding Messages
 
@@ -151,44 +149,13 @@ In `Actions`, you can respond to messages through `Promise` either by using retu
 
 Return a `Promise` in an `Action`，as shown in the <a href="#basic-example" target="_self">basic example</a>.
 
-If the data returned contains [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects), then they will be automatically identified and transferred when the `Action` is executed, for example:
-
-~~~typescript
-// demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler/worker";
-
-export type DemoActions = {
-  getOffscreenCanvas: () => ActionResult<OffscreenCanvas>;
-};
-
-onmessage = createOnmessage<DemoActions>({
-  async getOffscreenCanvas() {
-    const offscreen = new OffscreenCanvas(0, 0);
-    // `offscreen` will be transferred to `Main`, after which it is detached in `Worker` and cannot be operated on.
-    return offscreen;
-  },
-});
-~~~
-
-~~~typescript
-// demo.main.ts
-import { WorkerHandler } from "worker-handler/main";
-import { DemoActions } from "./demo.worker";
-
-const demoWorker = new WorkerHandler<DemoActions>(
-  new Worker(new URL("./demo.worker.ts", import.meta.url))
-);
-
-demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
-  console.log(res.data);
-});
-~~~
+It should be noted that this method of response cannot transfer `transferable objects`. Objects like `OffscreenCanvas`, which must be transferred to be used in different contexts, cannot be sent to the main thread in this way.
 
 #### <span id="this_end">Calling `this.$end()`</span>
 
 Calling `this.$end()` within `Action` can also pass the message to `Main` through `Promise`.
 
-The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (if not specified, then all transferable objects in the message will be automatically identified and placed into `transfer`).
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (If `"auto"`is passed in, it will automatically identify all `transferable objects` in the message as `transfer`).
 
 ❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$end()` needs to be called.
 
@@ -223,14 +190,14 @@ Using the function return value:
 - It has following limitations:
   - Once `return` is used, the `action` will not execute further.
   - It cannot be used within the callback functions of `action`.
-  - It can only automatically identify, but cannot manually specify the `transferable objects` to be transferred.
+  - It cannot transfer `transferable objects`.
 
 Using `this.$end()`:
 
 - It can flexibly match various situations, as reflected in:
   - After using `this.$end()`, the `action` can still execute further, but no further responses can be sent.
   - It can be used within the callback functions of `action`.
-  - It can both automatically identify and manually specify the `transferable objects` to be transferred.
+  - It can transfer `transferable objects`.
 - It does not support use in arrow functions.
 
 #### Responding without data
@@ -274,7 +241,7 @@ onmessage = createOnmessage<DemoActions>({
 
 Calling `this.$post()` within `Action` can pass the message to `Main` through `EventTarget`.
 
-The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (if not specified, then all transferable objects in the message will be automatically identified and placed into `transfer`).
+The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (If `"auto"`is passed in, it will automatically identify all `transferable objects` in the message as `transfer`).
 
 ❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$post()` needs to be called.
 
@@ -434,13 +401,11 @@ Instance methods:
 
     The options for calling the `Action`.
 
-    The complete form of `options` is an object that includes the `transfer` and the `timeout` properties:
+    The complete form of `options` is an object that includes the properties `transfer` and `timeout`:
 
     - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
 
-      If this property is not specified, all `transferable objects` in `payloads` will be automatically identified and placed into the `transfer` array.
-
-      If there is no need to transfer any objects, then set `transfer` to `[]`.
+      If the value of `transfer` is `"auto"`, then the `transferable objects` in `payloads` wil be automatically identified.
 
     - The value of `timeout` is a number of milliseconds representing the timeout duration for this connection. 
 
@@ -450,7 +415,7 @@ Instance methods:
 
     If only one of `transfer` or `timeout` needs to take effect, you can directly pass the  value of the one you need to the `options`.
 
-    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, any number less than or equal to `0`. 
+    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, `[]`, any number less than or equal to `0`. 
 
   - ...`payloads`:
 
@@ -534,7 +499,7 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
 
 - When passing messages, if the `transfer` option is not specified, all `transferable objects` will be automatically identified from the message and placed into `transfer`.
 
-- When sending a `terminating response` through the return value of `Action`, the return form of `[messageData, [...transferable]]` from version `v0.1.x` is discontinued. This means that if the response data is an array, it can also be returned directly. If there are `transferable objects` in the response data, they will be automatically identified and transferred.
+- When sending a `terminating response` through the return value of `Action`, the return form of `[messageData, [...transferable]]` from version `v0.1.x` is discontinued. This means that if the response data is an array, it can also be returned directly. 
 
   It is because if using `this.$end()` form to send a `terminating response`, `transfer` can be specified more intuitively, and everything that can be done using the return value form can also be done using `this.$end()`. Therefore, the use of the return value form has been simplified, making it more convenient to use in some situations to send `terminating responses`.
 

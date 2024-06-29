@@ -117,9 +117,7 @@ demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
 
 - `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组，用来指定 `payloads` 中需要转移的可转移对象。
 
-  如果不指定该属性，则 `payloads` 中的可转移对象全部会被自动识别并放入到 `transfer` 数组中。
-
-  如果不需要转移任何对象，则将 `transfer` 设置为 `[]`。
+  如果 `transfer` 的值为 `"auto"`，那么将会自动识别并转移 `payloads` 中的可转移对象。
 
 - `timeout` 是本次连接的超时时间。
 
@@ -129,7 +127,7 @@ demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
 
 - 如果只需要使用 `transfer`，可以直接传入一个数组。
 - 如果只需要使用 `timeout`，可以直接传入一个数字。
-- 如果都不需要开启，那么可以传入以下任意值：`null`、`undefined`、小于或等于 `0` 的任何数字。
+- 如果都不需要开启，那么可以传入以下任意值：`null`、`undefined`、`[]`、小于或等于 `0` 的任何数字。
 
 ## 消息响应
 
@@ -147,44 +145,13 @@ demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
 
 在 `Action` 中返回一个 `Promise`，如上面<a href="#basic-example" target="_self">基础示例</a>所示。
 
-如果 `return` 的数据中包含[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)，那么当 `Action` 执行时它们会被自动识别并被转移，例如：
-
-~~~typescript
-// demo.worker.ts
-import { ActionResult, createOnmessage } from "worker-handler/worker";
-
-export type DemoActions = {
-  getOffscreenCanvas: () => ActionResult<OffscreenCanvas>;
-};
-
-onmessage = createOnmessage<DemoActions>({
-  async getOffscreenCanvas() {
-    const offscreen = new OffscreenCanvas(0, 0);
-    // offscreen 会被转移到 Main 中，之后它在 Worker 中处于 detached 状态，无法对其进行操作
-    return offscreen;
-  },
-});
-~~~
-
-~~~typescript
-// demo.main.ts
-import { WorkerHandler } from "worker-handler/main";
-import { DemoActions } from "./demo.worker";
-
-const demoWorker = new WorkerHandler<DemoActions>(
-  new Worker(new URL("./demo.worker.ts", import.meta.url))
-);
-
-demoWorker.execute("getOffscreenCanvas").promise.then((res) => {
-  console.log(res.data); 
-});
-~~~
+需要注意，这种响应方式无法转移可转移对象。如果是像 `OffscreenCanvas` 这样必须通过转移才能在不同上下文中使用的对象，无法通过这种方式发送到主线程中。
 
 #### <span id="this_end">使用 this.$end()</span>
 
 在 `Action` 中调用 `this.$end()` 也可以将消息以 `Promise` 的形式传递给 `Main`。
 
-`this.$end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是指定要转移的 `transfer`（如果不指定，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
+`this.$end()` 接收的第一个参数是要传递的消息数据，可选第二个参数是指定要转移的 `transfer`（如果传入 `"auto"`，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
@@ -223,7 +190,7 @@ onmessage = createOnmessage<DemoActions>({
 
   - 无法在 `action` 内部的回调函数中使用；
 
-  - 只能自动识别，无法手动指定要转移的可转移对象。
+  - 无法转移可转移对象。
 
 使用 `this.$end()`：
 
@@ -233,7 +200,7 @@ onmessage = createOnmessage<DemoActions>({
   
   - 可以在 `action` 内部的回调函数中使用；
   
-  - 既可以自动识别，也可以手动指定要转移的可转移对象。
+  - 可以转移可转移对象。
   
 - 不支持在箭头函数中使用。
 
@@ -279,7 +246,7 @@ onmessage = createOnmessage<DemoActions>({
 
 在 `Action` 中调用 `this.$post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
 
-`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`（如果不指定，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
+`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`（如果传入 `"auto"`，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
@@ -444,9 +411,7 @@ init();
 
     - `transfer` 是一个会被转移所有权到 `Worker` 中的的[可转移对象](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Transferable_objects)数组，用来指定 `payloads` 中需要转移的对象。
 
-      如果不指定该属性，则 `payloads` 中的可转移对象全部会被自动识别并放入到 `transfer` 数组中。
-
-      如果不需要转移任何对象，则将 `transfer` 设置为 `[]`。
+      如果 `transfer` 的值为 `"auto"`，那么将会自动识别并转移 `payloads` 中的可转移对象。
 
     - `timeout` 是一个数字，表示本次连接的超时时间的毫秒数。
 
@@ -456,7 +421,7 @@ init();
 
     如果 `transfer` 和 `timeout` 只需要生效一项，则可以将要生效的值直接传给 `options`。
 
-    如果 `transfer` 和 `timeout` 都不需要生效，那么当不需要传递 `payload` 的情况下可以直接不穿值，否则可以传入以下任意值：`null`、`undefined`、小于或等于 `0` 的任何数字。
+    如果 `transfer` 和 `timeout` 都不需要生效，那么当不需要传递 `payload` 的情况下可以直接不传值，否则可以传入以下任意值：`null`、`undefined`、`[]`、小于或等于 `0` 的任何数字。
 
   - ...`payloads`：
 
@@ -540,7 +505,7 @@ init();
 
 - 传递消息时，如果没有指定 `transfer` 选项，那么将自动从消息中识别所有的可转移对象放入到 `transfer` 中。
 
-- 在 `Action` 中通过返回值发送终止响应时，取消在 `v0.1.x` 版本中 `[messageData, [...transferable]]` 的返回形式，这意味着如果响应的数据是一个数组，也可以直接将它返回。如果响应的数据中存在可转移对象，那么它们会被自动识别并转移。
+- 在 `Action` 中通过返回值发送终止响应时，取消在 `v0.1.x` 版本中 `[messageData, [...transferable]]` 的返回形式，这意味着如果响应的数据是一个数组，也可以直接将它返回。
 
   这是因为，如果使用 `$this.end()` 形式发送终止响应，可以更直观地指定 `transfer`，并且使用返回值形式能做到的，使用 `$this.end()` 都能做到。因此简化了返回值形式的使用方式，使得在一些场景下可以更方便地使用返回值形式发送终止响应。
 
