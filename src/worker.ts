@@ -27,6 +27,7 @@ type MsgFromWorkerBasic<
   data: D;
   executionId: number;
   done: boolean;
+  isArray: boolean;
   error: any;
   proxyTargetId: number;
   parentProxyTargetId: number;
@@ -45,7 +46,7 @@ export type MsgFromWorker<
       : T extends "port_proxy"
         ? Pick<
             MsgFromWorkerBasic<T>,
-            "type" | "executionId" | "proxyTargetId" | "done"
+            "type" | "executionId" | "proxyTargetId" | "done" | "isArray"
           >
         : T extends "proxy_data"
           ? Pick<
@@ -57,7 +58,11 @@ export type MsgFromWorker<
           : T extends "create_subproxy"
             ? Pick<
                 MsgFromWorkerBasic<T>,
-                "type" | "proxyTargetId" | "parentProxyTargetId" | "getterId"
+                | "type"
+                | "proxyTargetId"
+                | "parentProxyTargetId"
+                | "getterId"
+                | "isArray"
               >
             : never;
 
@@ -132,7 +137,7 @@ function postActionMessage(
   transfer: Transferable[] = []
 ) {
   try {
-    if (!judgeStructuredCloneable(message))
+    if (!judgeStructuredCloneable(message.data))
       throw new Error("could not be cloned.");
     postMessage(message, transfer);
   } catch (error: any) {
@@ -159,6 +164,7 @@ function postActionMessage(
           executionId: message.executionId,
           done: message.done,
           proxyTargetId: currentProxyTargetId,
+          isArray: Array.isArray(data),
         };
 
         proxyTargetTreeNodes[currentProxyTargetId] =
@@ -230,7 +236,7 @@ function postProxyData(
       )
     : [];
   try {
-    if (!judgeStructuredCloneable(proxyDataMsg))
+    if (!judgeStructuredCloneable(data))
       throw new Error("could not be cloned.");
     postMessage(proxyDataMsg, transfer);
   } catch (error: any) {
@@ -255,6 +261,7 @@ function postProxyData(
       proxyTargetId: currentProxyTargetId,
       parentProxyTargetId: proxyTargetId,
       getterId: getterId!,
+      isArray: Array.isArray(data),
     };
     const proxyTargetTreeNodeValue: ProxyTargetTreeNodeValue = {
       target: data,
@@ -526,6 +533,39 @@ export function createOnmessage<A extends CommonActions>(
         proxyTargetTreeNodes[subTreeNode.value.proxyTargetId] = null;
       }
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
+
+      //#endregion
+
+      //#region - update_array
+    } else if (type === "update_array") {
+      const e = ev as MessageEvent<MsgToWorker<"update_array">>;
+      const {
+        proxyTargetId,
+        itemProxyContexts, // 要更新的数组中，无法结构化克隆的部分会已 ProxyContext 的形式传递到这里
+        cloneableItemsInArr, // 要更新的数组中，可结构化克隆的部分
+      } = e.data;
+
+      // 将 itemProxyContexts 和 cloneableItemsInArr 合并，并将 ProxyContext 还原为原始数据
+      const reducedItems = itemProxyContexts.map((itemProxyContext) => {
+        if (itemProxyContext) return getTargetByProxyContext(itemProxyContext);
+      });
+      const newArr = cloneableItemsInArr.map((item, index) => {
+        if (item === undefined) {
+          return reducedItems[index];
+        } else {
+          return item;
+        }
+      });
+
+      // 获取目标数组所在的树节点
+      const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+
+      // 更新数组
+      const oldArr = proxyTargetTreeNode.value.target as any[];
+      oldArr.length = newArr.length;
+      for (let i = 0; i < oldArr.length; i++) {
+        oldArr[i] = newArr[i];
+      }
     }
 
     //#endregion

@@ -10,6 +10,7 @@ type MsgToWorkerType =
   | "execute_action"
   | "handle_proxy"
   | "revoke_proxy"
+  | "update_array"
   | "check_clonability";
 
 export interface ProxyContext {
@@ -19,6 +20,8 @@ export interface ProxyContext {
 
 interface ProxyContextX extends ProxyContext {
   revoke: () => void;
+  associatedProxies: Set<any>;
+  isRevoked: boolean;
 }
 
 type MsgToWorkerBasic<
@@ -43,6 +46,8 @@ type MsgToWorkerBasic<
   argProxyContexts: (ProxyContext | undefined)[];
   thisProxyContext?: ProxyContext;
   thisArg: any;
+  itemProxyContexts: (ProxyContext | undefined)[];
+  cloneableItemsInArr: any[];
 };
 
 export type MsgToWorker<
@@ -102,9 +107,17 @@ export type MsgToWorker<
             : never
     : T extends "revoke_proxy"
       ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId">
-      : T extends "check_clonability"
-        ? Pick<MsgToWorkerBasic<T>, "type" | "value">
-        : never;
+      : T extends "update_array"
+        ? Pick<
+            MsgToWorkerBasic<T>,
+            | "type"
+            | "proxyTargetId"
+            | "itemProxyContexts"
+            | "cloneableItemsInArr"
+          >
+        : T extends "check_clonability"
+          ? Pick<MsgToWorkerBasic<T>, "type" | "value">
+          : never;
 
 // MsgData 是当接收到 Worker 传递来的 action_data 或 port_proxy 消息后，将其打包处理后的消息
 type MsgData<
@@ -113,7 +126,7 @@ type MsgData<
   T extends "message" | "proxy" = "message" | "proxy",
 > = {
   readonly actionName: keyof A;
-  readonly isProxy: T extends "proxy" ? true : false;
+  readonly isProxy: T extends "proxy" ? true | { isArray: boolean } : false;
 } & (T extends "message"
   ? { readonly data: D }
   : T extends "proxy"
@@ -296,7 +309,7 @@ export class WorkerHandler<A extends CommonActions> {
     const {
       argProxyContexts: payloadProxyContexts,
       argumentsList: payloadsList,
-    } = this.utilsForHandler.handleArguments(payloads);
+    } = this.utilsForProxy.handleArguments(payloads);
 
     const msgToWorker: MsgToWorker<"execute_action", A, K> = {
       type: "execute_action",
@@ -368,7 +381,7 @@ export class WorkerHandler<A extends CommonActions> {
         } else if (e.data.type === "port_proxy") {
           const msgData: MsgData<A, D, "proxy"> = {
             actionName,
-            isProxy: true,
+            isProxy: { isArray: e.data.isArray },
             proxyTargetId: e.data.proxyTargetId,
           };
           sendPort.postMessage(msgData);
@@ -439,7 +452,7 @@ export class WorkerHandler<A extends CommonActions> {
           } else if (e.data.type === "port_proxy") {
             const result: MsgData<A, D, "proxy"> = {
               actionName,
-              isProxy: true,
+              isProxy: { isArray: e.data.isArray },
               proxyTargetId: e.data.proxyTargetId,
             };
             resolve(result);
@@ -462,10 +475,16 @@ export class WorkerHandler<A extends CommonActions> {
 
     const newPromise = promise.then((res) => {
       if (res.isProxy) {
+        let isArray = false;
+        if (typeof res.isProxy === "object") {
+          isArray = res.isProxy.isArray;
+        }
         const msgData = res as MsgData<A, D, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
-          Symbol.for("root_proxy")
+          Symbol.for("root_proxy"),
+          null,
+          isArray
         );
         return { ...res, data } as ExtendedMsgData<A, D>;
       } else {
@@ -521,10 +540,16 @@ export class WorkerHandler<A extends CommonActions> {
       }
       let extendedEvent: any;
       if (ev.data.isProxy) {
+        let isArray = false;
+        if (typeof ev.data.isProxy === "object") {
+          isArray = ev.data.isProxy.isArray;
+        }
         const msgData = ev.data as MsgData<A, any, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
-          Symbol.for("root_proxy")
+          Symbol.for("root_proxy"),
+          null,
+          isArray
         );
         extendedEvent = { ...extendedEventTmp, ...msgData, data };
       } else {
@@ -568,7 +593,12 @@ export class WorkerHandler<A extends CommonActions> {
             e.data.getterId === handleProxyMsg.getterId
           ) {
             resolve(
-              this.createProxy(e.data.proxyTargetId, Symbol.for("sub_proxy"))
+              this.createProxy(
+                e.data.proxyTargetId,
+                Symbol.for("sub_proxy"),
+                null,
+                e.data.isArray
+              )
             );
             this.handleListeners(handleProxylistenerMap, false);
           }
@@ -602,7 +632,7 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#region - UtilsForHandler
 
-  private utilsForHandler: {
+  private utilsForProxy: {
     reduceProxyContext(proxyContext: ProxyContextX): ProxyContext;
     reduceProxyContext(proxyContext: undefined): undefined;
     reduceProxyContext(
@@ -649,6 +679,18 @@ export class WorkerHandler<A extends CommonActions> {
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
   private proxyWeakMap = new WeakMap<any, ProxyContextX>();
 
+  /**
+   * 检测一个数据是否可以被传输到 Worker 中，如果不能，则会抛出错误
+   * @param value
+   */
+  private checkClonability(value: any) {
+    const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
+      type: "check_clonability",
+      value,
+    };
+    this.worker.postMessage(checkClonabilityMsg);
+  }
+
   //#region - createProxy
 
   /**
@@ -661,11 +703,49 @@ export class WorkerHandler<A extends CommonActions> {
   private createProxy(
     proxyTargetId: number,
     target: any = {},
-    parentProperty: keyof any | (keyof any)[] | null = null
+    parentProperty: keyof any | (keyof any)[] | null = null,
+    isTargetArray: boolean = false
   ) {
     const _this = this;
 
-    const handler: ProxyHandler<any> = {
+    //#region - tailProxy
+
+    const tailTarget = typeof target === "symbol" ? {} : target;
+
+    // tailProxy 是最内层的 Proxy，如果 createProxy() 调用时，target 参数传入了一个非 symbol 类型的数据，那么对 tailProxy 的操作会被反应到该数据上，否则 tailProxy 的作用只是提供一个 function(){} 作为 target，使得 dataProxy 的 apply 和 constract 捕获器可以工作
+    const { proxy: tailProxy, revoke: tailProxyRevoke } = Proxy.revocable(
+      function () {},
+      {
+        get(_, property) {
+          if (property in tailTarget) {
+            const value = tailTarget[property];
+            if (typeof value === "function") {
+              return value.bind(tailTarget);
+            } else {
+              return value;
+            }
+          }
+
+          return Reflect.get(tailTarget, property);
+        },
+        set(_, property, value) {
+          return Reflect.set(tailTarget, property, value);
+        },
+        apply(target, thisArg, argumentsList) {
+          return Reflect.apply(target, thisArg, argumentsList);
+        },
+        has(_, property) {
+          return Reflect.has(tailTarget, property);
+        },
+      }
+    );
+
+    //#endregion
+
+    //#region - dataProxy
+
+    // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
+    const dataProxyHandler: ProxyHandler<any> = {
       get(_target, property) {
         if (typeof property === "symbol") return;
 
@@ -729,17 +809,13 @@ export class WorkerHandler<A extends CommonActions> {
           propertyValue = property;
         }
 
-        const checkClonabilityMsg: MsgToWorker<"check_clonability"> = {
-          type: "check_clonability",
-          value,
-        };
         try {
-          _this.worker.postMessage(checkClonabilityMsg);
+          _this.checkClonability(value);
         } catch (error) {
           const valueProxyContextX = _this.proxyWeakMap.get(value);
           if (valueProxyContextX) {
             const valueProxyContext =
-              _this.utilsForHandler.reduceProxyContext(valueProxyContextX);
+              _this.utilsForProxy.reduceProxyContext(valueProxyContextX);
             return _this.handleProxy({
               type: "handle_proxy",
               trap: "set",
@@ -766,7 +842,7 @@ export class WorkerHandler<A extends CommonActions> {
 
         // 处理 argumentsList
         const { argProxyContexts, argumentsList } =
-          _this.utilsForHandler.handleArguments(_argumentsList);
+          _this.utilsForProxy.handleArguments(_argumentsList);
 
         return _this.handleProxy({
           type: "handle_proxy",
@@ -781,7 +857,7 @@ export class WorkerHandler<A extends CommonActions> {
           argumentsList,
           argProxyContexts,
           thisProxyContext:
-            _this.utilsForHandler.reduceProxyContext(_thisProxyContext),
+            _this.utilsForProxy.reduceProxyContext(_thisProxyContext),
           thisArg: _thisProxyContext ? undefined : thisArg,
         });
       },
@@ -789,7 +865,7 @@ export class WorkerHandler<A extends CommonActions> {
       construct(_, _argumentsList) {
         // 处理 argumentList
         const { argProxyContexts, argumentsList } =
-          _this.utilsForHandler.handleArguments(_argumentsList);
+          _this.utilsForProxy.handleArguments(_argumentsList);
 
         return _this.handleProxy({
           type: "handle_proxy",
@@ -807,41 +883,162 @@ export class WorkerHandler<A extends CommonActions> {
       },
     };
 
-    const targetArg = typeof target !== "symbol" ? target : {};
+    const { proxy: dataProxy, revoke: dataProxyRevoke } = Proxy.revocable(
+      tailProxy,
+      dataProxyHandler
+    );
 
-    const targetProxy = new Proxy(function () {}, {
-      get(_, property) {
-        if (property in targetArg) {
-          const value = targetArg[property];
-          if (typeof value === "function") {
-            return value.bind(targetArg);
-          } else {
-            return value;
-          }
+    //#endregion
+
+    //#region - arrayProxy
+
+    let arrayProxy: any[] | null = null;
+    let arrayProxyRevoke: (() => void) | null = null;
+
+    // 当目标数据为 Array 时进行拓展处理
+    if (isTargetArray) {
+      // 在 Main 中创建一个数组
+      const arr: any[] = [];
+
+      // drawArr 将 Worker 中的数组同步给 Main 中的数组
+      async function drawArr() {
+        arr.length = await dataProxy.length;
+        for (let i = 0; i < arr.length; i++) {
+          arr[i] = await dataProxy[i];
         }
+      }
 
-        return Reflect.get(targetArg, property);
-      },
-      set(_, property, value) {
-        return Reflect.set(targetArg, property, value);
-      },
-      apply(target, thisArg, argumentsList) {
-        return Reflect.apply(target, thisArg, argumentsList);
-      },
-      has(_, property) {
-        return Reflect.has(targetArg, property);
-      },
-    });
+      // updateArr 将 Main 中的数组同步给 Worker 中的数组
+      async function updateArr() {
+        const cloneableItemsInArr = arr.map((item) => {
+          try {
+            _this.checkClonability(item);
+          } catch (error) {
+            return;
+          }
+          return item;
+        });
+        const itemProxyContexts = arr.map((item) => {
+          const itemProxyContext = _this.utilsForProxy.reduceProxyContext(
+            _this.proxyWeakMap.get(item)
+          );
+          return itemProxyContext;
+        });
+        const updateArrMsg: MsgToWorker<"update_array"> = {
+          type: "update_array",
+          proxyTargetId,
+          itemProxyContexts,
+          cloneableItemsInArr,
+        };
+         _this.worker.postMessage(updateArrMsg);
+      }
 
-    const { proxy, revoke } = Proxy.revocable(targetProxy, handler);
+      // 生成改造后的数组方法
+      function getWrappedArrMethod(property: string) {
+        const method = (arr as any)[property];
+        return async function (...args: any[]) {
+          await drawArr();
+          method.apply(arr, args);
+          // 会修改原数组的方法的名称
+          const mutatingMethods = [
+            "copyWithin",
+            "fill",
+            "pop",
+            "push",
+            "reverse",
+            "shift",
+            "sort",
+            "splice",
+            "unshift",
+          ];
+          if (mutatingMethods.indexOf(property) !== -1) await updateArr();
+        };
+      }
 
-    this.proxyWeakMap.set(proxy, {
+      // 判断一个属性名是否是数组方法名
+      function isArrayMethodProperty(property: keyof any): property is string {
+        return typeof property === "symbol" || typeof property === "number"
+          ? false
+          : Object.getOwnPropertyNames(Array.prototype).indexOf(property) !== -1
+            ? typeof (arr as any)[property] === "function"
+            : false;
+      }
+
+      const arrayProxyHandler: ProxyHandler<Array<any>> = {
+        get(_, property) {
+          if (isArrayMethodProperty(property)) {
+            return getWrappedArrMethod(property);
+          } else {
+            const promise = new Promise(async (resolve) => {
+              await drawArr();
+              if (
+                typeof property === "number" ||
+                typeof property === "string"
+              ) {
+                resolve(arr[property]);
+              } else {
+                resolve(undefined);
+              }
+            });
+
+            // return promise;
+            return _this.createProxy(proxyTargetId, promise, property);
+          }
+        },
+        set(_, property, value) {
+          if (!isNaN(Number(property)) || property === "length") {
+            (arr as any)[property] = value;
+            updateArr();
+            return true;
+          } else {
+            return false;
+          }
+        },
+      };
+      const { proxy, revoke } = Proxy.revocable([], arrayProxyHandler);
+
+      arrayProxy = proxy;
+      arrayProxyRevoke = revoke;
+    }
+
+    //#endregion
+
+    //#region - 关联 Proxy
+
+    // 将关联的 Proxy 放入 associatedProxies 集合中
+    const associatedProxies = new Set();
+    associatedProxies.add(tailProxy);
+    associatedProxies.add(dataProxy);
+    if (arrayProxy) associatedProxies.add(arrayProxy);
+
+    this.proxyWeakMap.set(dataProxy, {
       proxyTargetId,
       parentProperty,
-      revoke,
+      revoke: dataProxyRevoke,
+      associatedProxies,
+      isRevoked: false,
     });
 
-    return proxy;
+    this.proxyWeakMap.set(tailProxy, {
+      proxyTargetId,
+      parentProperty,
+      revoke: tailProxyRevoke,
+      associatedProxies,
+      isRevoked: false,
+    });
+
+    if (arrayProxy && arrayProxyRevoke)
+      this.proxyWeakMap.set(arrayProxy, {
+        proxyTargetId,
+        parentProperty,
+        revoke: arrayProxyRevoke,
+        associatedProxies,
+        isRevoked: false,
+      });
+
+    //#endregion
+
+    return arrayProxy || dataProxy;
   }
 
   //#endregion
@@ -882,7 +1079,14 @@ export class WorkerHandler<A extends CommonActions> {
   revokeProxy(proxy: any) {
     const proxyContext = this.proxyWeakMap.get(proxy);
     if (!proxyContext) return;
-    proxyContext.revoke();
+    if (!proxyContext.isRevoked) proxyContext.revoke();
+    proxyContext.isRevoked = true;
+    proxyContext.associatedProxies.delete(proxy);
+
+    proxyContext.associatedProxies.forEach((associatedProxy, _, set) => {
+      if (set.has(associatedProxy)) this.revokeProxy(associatedProxy);
+    });
+
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
       proxyTargetId: proxyContext.proxyTargetId,
