@@ -930,7 +930,7 @@ export class WorkerHandler<A extends CommonActions> {
           itemProxyContexts,
           cloneableItemsInArr,
         };
-         _this.worker.postMessage(updateArrMsg);
+        _this.worker.postMessage(updateArrMsg);
       }
 
       // 生成改造后的数组方法
@@ -965,27 +965,22 @@ export class WorkerHandler<A extends CommonActions> {
       }
 
       const arrayProxyHandler: ProxyHandler<Array<any>> = {
-        get(_, property) {
-          if (isArrayMethodProperty(property)) {
+        get(arr, property) {
+          if (property === "then" || typeof property === "symbol") {
+            return;
+          } else if (isArrayMethodProperty(property)) {
             return getWrappedArrMethod(property);
-          } else {
+          } else if (!isNaN(Number(property)) || property === "length") {
             const promise = new Promise(async (resolve) => {
               await drawArr();
-              if (
-                typeof property === "number" ||
-                typeof property === "string"
-              ) {
-                resolve(arr[property]);
-              } else {
-                resolve(undefined);
-              }
+              resolve((arr as any)[property]);
             });
-
-            // return promise;
             return _this.createProxy(proxyTargetId, promise, property);
+          } else {
+            return;
           }
         },
-        set(_, property, value) {
+        set(arr, property, value) {
           if (!isNaN(Number(property)) || property === "length") {
             (arr as any)[property] = value;
             updateArr();
@@ -995,7 +990,7 @@ export class WorkerHandler<A extends CommonActions> {
           }
         },
       };
-      const { proxy, revoke } = Proxy.revocable([], arrayProxyHandler);
+      const { proxy, revoke } = Proxy.revocable(arr, arrayProxyHandler);
 
       arrayProxy = proxy;
       arrayProxyRevoke = revoke;
