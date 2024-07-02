@@ -22,6 +22,7 @@ interface ProxyContextX extends ProxyContext {
   revoke: () => void;
   associatedProxies: Set<any>;
   isRevoked: boolean;
+  isArray: boolean;
 }
 
 type MsgToWorkerBasic<
@@ -614,17 +615,20 @@ export class WorkerHandler<A extends CommonActions> {
   }
 
   private handleProxy(handleProxyMsg: MsgToWorker<"handle_proxy">) {
-    this.worker.postMessage(handleProxyMsg);
-    const { trap } = handleProxyMsg;
-
-    if (trap === "get") {
-      return this.receiveProxyData(handleProxyMsg);
-    } else if (trap === "set") {
-      return true;
-    } else if (trap === "apply") {
-      return this.receiveProxyData(handleProxyMsg);
-    } else if (trap === "construct") {
-      return this.receiveProxyData(handleProxyMsg);
+    try {
+      this.worker.postMessage(handleProxyMsg);
+      const { trap } = handleProxyMsg;
+      if (trap === "get") {
+        return this.receiveProxyData(handleProxyMsg);
+      } else if (trap === "set") {
+        return true;
+      } else if (trap === "apply") {
+        return this.receiveProxyData(handleProxyMsg);
+      } else if (trap === "construct") {
+        return this.receiveProxyData(handleProxyMsg);
+      }
+    } catch (error) {
+      console.error(error);
     }
   }
 
@@ -749,12 +753,7 @@ export class WorkerHandler<A extends CommonActions> {
       get(_target, property) {
         if (typeof property === "symbol") return;
 
-        if (
-          (target === Symbol.for("root_proxy") ||
-            target === Symbol.for("sub_proxy")) &&
-          property === "then"
-        )
-          return;
+        if (typeof target === "symbol" && property === "then") return;
 
         if (property in _target) {
           const value = _target[property];
@@ -936,22 +935,63 @@ export class WorkerHandler<A extends CommonActions> {
       // 生成改造后的数组方法
       function getWrappedArrMethod(property: string) {
         const method = (arr as any)[property];
-        return async function (...args: any[]) {
-          await drawArr();
-          method.apply(arr, args);
-          // 会修改原数组的方法的名称
-          const mutatingMethods = [
-            "copyWithin",
-            "fill",
-            "pop",
-            "push",
-            "reverse",
-            "shift",
-            "sort",
-            "splice",
-            "unshift",
-          ];
-          if (mutatingMethods.indexOf(property) !== -1) await updateArr();
+
+        return function (...args: any[]) {
+          const methodResultPromise: Promise<any> = new Promise(
+            async (resolve, reject) => {
+              try {
+                await drawArr();
+                const methodResult = method.apply(arr, args);
+                // 会修改原数组的方法的名称
+                const mutatingMethods = [
+                  "copyWithin",
+                  "fill",
+                  "pop",
+                  "push",
+                  "reverse",
+                  "shift",
+                  "sort",
+                  "splice",
+                  "unshift",
+                ];
+                if (mutatingMethods.indexOf(property) !== -1) await updateArr();
+                if (Array.isArray(methodResult)) {
+                  const promise = new Promise<any[]>(async (resolve) => {
+                    const arrResult = [];
+                    for (let i = 0; i < methodResult.length; i++) {
+                      arrResult[i] = await methodResult[i];
+                    }
+
+                    const arrResultProxy = new Proxy(arrResult, {
+                      get(arrResult, property) {
+                        if (!isNaN(Number(property)) || property === "length") {
+                          const item = (arrResult as any)[property];
+                          const proxyContextX = _this.proxyWeakMap.get(item);
+                          if (proxyContextX) {
+                            return _this.createProxy(
+                              proxyContextX.proxyTargetId,
+                              Symbol.for("reused_proxy"),
+                              null,
+                              proxyContextX.isArray
+                            );
+                          }
+                          return item;
+                        }
+                      },
+                    });
+                    // 这个 arrResultProxy 最终会 resolve 给数组方法返回的 promise
+                    resolve(arrResultProxy);
+                  });
+                  resolve(promise);
+                }
+                resolve(methodResult);
+              } catch (error) {
+                reject(error);
+              }
+            }
+          );
+
+          return methodResultPromise;
         };
       }
 
@@ -1012,6 +1052,7 @@ export class WorkerHandler<A extends CommonActions> {
       revoke: dataProxyRevoke,
       associatedProxies,
       isRevoked: false,
+      isArray: isTargetArray,
     });
 
     this.proxyWeakMap.set(tailProxy, {
@@ -1020,6 +1061,7 @@ export class WorkerHandler<A extends CommonActions> {
       revoke: tailProxyRevoke,
       associatedProxies,
       isRevoked: false,
+      isArray: isTargetArray,
     });
 
     if (arrayProxy && arrayProxyRevoke)
@@ -1029,6 +1071,7 @@ export class WorkerHandler<A extends CommonActions> {
         revoke: arrayProxyRevoke,
         associatedProxies,
         isRevoked: false,
+        isArray: isTargetArray,
       });
 
     //#endregion
