@@ -155,10 +155,9 @@ type ProxyData<D, T extends boolean = true> = D extends new (
   : D extends (...args: any[]) => infer R // Data 拥有调用签名的情况
     ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
     : D extends object // 排除上面条件后， Data 是引用数据类型的情况
-      ? // D extends Array<infer I>
-        //   ? ProxyObj<D, T> | ProxyArray<I>
-        //   :
-        ProxyObj<D, T>
+      ? D extends Array<infer I>
+        ? ProxyObj<D, T> | ProxyArr<I>
+        : ProxyObj<D, T>
       : PromiseLike<D>;
 
 type ProxyObj<D, T extends boolean> = {
@@ -174,12 +173,13 @@ type ProxyObj<D, T extends boolean> = {
     : ProxyData<D[K], false>; // 不是根 Proxy 的情况，
 };
 
-// interface ProxyArray<T> extends Omit<Array<T>, "map"> {
-//   // map<U>(
-//   //   callbackfn: (value: T, index: number, array: T[]) => U,
-//   //   thisArg?: any
-//   // ): PromiseLike<ProxyData<U[]>>;
-// }
+type ArrayWithoutIterator<T> = {
+  [P in keyof Array<T>]: P extends typeof Symbol.iterator ? never : Array<T>[P];
+};
+
+export interface ProxyArr<T> extends ArrayWithoutIterator<T> {
+  [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
+}
 
 //#endregion
 
@@ -913,7 +913,9 @@ export class WorkerHandler<A extends CommonActions> {
       // 在 Main 中创建一个数组
       const arr: any[] = [];
 
-      // drawArr 将 Worker 中的数组同步给 Main 中的数组
+      /**
+       * 将 Worker 中的数组同步给 Main 中的数组
+       */
       async function drawArr() {
         arr.length = await dataProxy.length;
         for (let i = 0; i < arr.length; i++) {
@@ -921,7 +923,9 @@ export class WorkerHandler<A extends CommonActions> {
         }
       }
 
-      // updateArr 将 Main 中的数组同步给 Worker 中的数组
+      /**
+       * updateArr 将 Main 中的数组同步给 Worker 中的数组
+       */
       async function updateArr() {
         const cloneableItemsInArr = arr.map((item) => {
           try {
@@ -946,7 +950,11 @@ export class WorkerHandler<A extends CommonActions> {
         _this.worker.postMessage(updateArrMsg);
       }
 
-      // 生成改造后的数组方法
+      /**
+       * 生成改造后的数组方法
+       * @param property 要改造的数组方法名
+       * @returns
+       */
       function getWrappedArrMethod(property: string) {
         const method = (arr as any)[property];
 
@@ -1009,7 +1017,11 @@ export class WorkerHandler<A extends CommonActions> {
         };
       }
 
-      // 判断一个属性名是否是数组方法名
+      /**
+       * 判断一个属性名是否是数组方法名
+       * @param property
+       * @returns
+       */
       function isArrayMethodProperty(property: keyof any): property is string {
         return typeof property === "symbol" || typeof property === "number"
           ? false
@@ -1021,6 +1033,13 @@ export class WorkerHandler<A extends CommonActions> {
       const arrayProxyHandler: ProxyHandler<Array<any>> = {
         get(arr, property) {
           if (property === "then" || typeof property === "symbol") {
+            if (property === Symbol.asyncIterator)
+              return async function* () {
+                await drawArr();
+                for (const item of arr) {
+                  yield await item;
+                }
+              };
             return;
           } else if (isArrayMethodProperty(property)) {
             return getWrappedArrMethod(property);
