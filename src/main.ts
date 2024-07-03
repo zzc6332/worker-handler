@@ -159,7 +159,8 @@ type ProxyData<D, T extends boolean = true> = D extends new (
         : ProxyObj<D, T>
       : PromiseLike<D>;
 
-type ProxyObj<D, T extends boolean> = {
+// 对应数据为对象的 Worker Proxy
+export type ProxyObj<D, T extends boolean = true> = {
   [K in keyof D]: T extends true // 是根 Proxy 的情况
     ? // 当对象中的值拥有构造签名或调用签名的情况
       D[K] extends (...args: any[]) => any
@@ -182,9 +183,21 @@ type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
     : A[P];
 };
 
+// 对应数据为数组的 Worker Proxy
 interface ProxyArr<T> extends ArrWithRewrittenMethods<T> {
   [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
 }
+
+type ParametersOfAction<T extends ((...args: any) => any)[]> = {
+  [K in keyof T]: ReceivedData<T[K]>;
+};
+
+// 修正 Actions 中 Action 在 Main 中的接收的 payload
+type AdaptedAction<A extends CommonActions> = {
+  [K in keyof A]: (
+    ...args: ParametersOfAction<Parameters<A[K]>>
+  ) => ReturnType<A[K]>;
+};
 
 //#endregion
 
@@ -324,7 +337,7 @@ export class WorkerHandler<A extends CommonActions> {
   private postMsgToWorker<K extends keyof A>(
     actionName: K,
     transfer: Transferable[],
-    ...payloads: Parameters<A[K]>
+    ...payloads: Parameters<AdaptedAction<A>[K]>
   ) {
     const {
       argProxyContexts: payloadProxyContexts,
@@ -560,10 +573,8 @@ export class WorkerHandler<A extends CommonActions> {
       }
       let extendedEvent: any;
       if (ev.data.isProxy) {
-        let isArray = false;
-        if (typeof ev.data.isProxy === "object") {
-          isArray = ev.data.isProxy.isArray;
-        }
+        const isArray =
+          typeof ev.data.isProxy === "object" ? ev.data.isProxy.isArray : false;
         const msgData = ev.data as MsgData<A, any, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
@@ -696,12 +707,17 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#endregion
 
+  //#region - 私有属性
+
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
   private proxyGetterId = 0;
 
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
   private proxyWeakMap = new WeakMap<any, ProxyContextX>();
 
+  //#endregion
+
+  //#region - checkClonability
   /**
    * 检测一个数据是否可以被传输到 Worker 中，如果不能，则会抛出错误
    * @param value
@@ -713,6 +729,8 @@ export class WorkerHandler<A extends CommonActions> {
     };
     this.worker.postMessage(checkClonabilityMsg);
   }
+
+  //#endregion
 
   //#region - createProxy
 
@@ -1098,6 +1116,8 @@ export class WorkerHandler<A extends CommonActions> {
     return this.worker;
   }
 
+  //#region - terminate
+
   /**
    * 终止 worker 进程，并移除主线程上为 worker 进程添加的监听器
    */
@@ -1118,6 +1138,10 @@ export class WorkerHandler<A extends CommonActions> {
     });
     this.messageChannelsSet.clear();
   }
+
+  //#endregion
+
+  //#region - revokeProxy
 
   /**
    * 废除 proxy，并清理 Worker 中对应的数据
@@ -1141,6 +1165,10 @@ export class WorkerHandler<A extends CommonActions> {
     this.worker.postMessage(revokeProxyMsg);
   }
 
+  //#endregion
+
+  //#region - execute
+
   /**
    * 执行一次 action 调用
    * @param actionName action 名称
@@ -1155,7 +1183,7 @@ export class WorkerHandler<A extends CommonActions> {
       | ExecuteOptions["transfer"]
       | ExecuteOptions["timeout"]
       | null,
-    ...payloads: Parameters<A[K]>
+    ...payloads: Parameters<AdaptedAction<A>[K]>
   ) {
     let inputedTransfer: ExecuteOptions["transfer"] = [];
     let timeout: number = 0;
@@ -1282,10 +1310,7 @@ export class WorkerHandler<A extends CommonActions> {
       onmessageerror: {
         set: (
           extendedOnmessageerror:
-            | ((
-                this: MessagePort,
-                ev: MessageEventX<A, GetDataType<A, K>>
-              ) => any)
+            | ((this: MessagePort, ev: MessageEventX<A, any>) => any)
             | null
         ) => {
           // 由于 messageerror 事件是使用 dispatchEvent 触发的，仅对 addEventListener() 生效，因此这里使用 addEventListener() 来模拟
@@ -1312,6 +1337,8 @@ export class WorkerHandler<A extends CommonActions> {
     return messageSource;
   }
 }
+
+//#endregion
 
 //#endregion
 
