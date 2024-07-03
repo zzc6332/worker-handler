@@ -138,8 +138,8 @@ type MsgData<
 type ExtendedMsgData<A extends CommonActions, D> = {
   readonly actionName: keyof A;
   readonly isProxy: boolean;
-  readonly data: D;
-  // readonly data: ProxyData<D>; // - 未使用
+  // readonly data: D;
+  readonly data: ProxyData<D>;
   readonly proxyTargetId: number | undefined;
 };
 
@@ -148,24 +148,38 @@ type ReceivedData<D, T extends boolean = true> =
   D extends StructuredCloneable<Transferable> ? D : ProxyData<D, T>;
 
 // 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
-type ProxyData<D, T extends boolean = true> = D extends (
+type ProxyData<D, T extends boolean = true> = D extends new (
   ...args: any[]
-) => infer R
-  ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
-  : D extends new (...args: any[]) => infer I
-    ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
-    : D extends object
-      ? {
-          [K in keyof D]: T extends true
-            ? D[K] extends (...args: any[]) => any
-              ? ReceivedData<D[K], false>
-              : D[K] extends new (...args: any[]) => any
-                ? ReceivedData<D[K], false>
-                : PromiseLike<ReceivedData<D[K], false>> &
-                    ProxyData<D[K], false>
-            : ProxyData<D[K], false>;
-        }
+) => infer I // Data 拥有构造签名的情况
+  ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
+  : D extends (...args: any[]) => infer R // Data 拥有调用签名的情况
+    ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
+    : D extends object // 排除上面条件后， Data 是引用数据类型的情况
+      ? // D extends Array<infer I>
+        //   ? ProxyObj<D, T> | ProxyArray<I>
+        //   :
+        ProxyObj<D, T>
       : PromiseLike<D>;
+
+type ProxyObj<D, T extends boolean> = {
+  [K in keyof D]: T extends true // 是根 Proxy 的情况
+    ? // 当对象中的值拥有构造签名或调用签名的情况
+      D[K] extends (...args: any[]) => any
+      ? ProxyData<D[K], false>
+      : D[K] extends new (...args: any[]) => any
+        ? ProxyData<D[K], false>
+        : // 对象中的值排除上面条件后的情况
+          PromiseLike<ReceivedData<D[K], false>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
+            ProxyData<D[K], false> // 链式访问的情况，如 const layer2 = await data.layer1.layer2
+    : ProxyData<D[K], false>; // 不是根 Proxy 的情况，
+};
+
+// interface ProxyArray<T> extends Omit<Array<T>, "map"> {
+//   // map<U>(
+//   //   callbackfn: (value: T, index: number, array: T[]) => U,
+//   //   thisArg?: any
+//   // ): PromiseLike<ProxyData<U[]>>;
+// }
 
 //#endregion
 
@@ -1275,7 +1289,10 @@ export class WorkerHandler<A extends CommonActions> {
       onmessageerror: {
         set: (
           extendedOnmessageerror:
-            | ((this: MessagePort, ev: MessageEvent<A>) => any)
+            | ((
+                this: MessagePort,
+                ev: MessageEventX<A, GetDataType<A, K>>
+              ) => any)
             | null
         ) => {
           // 由于 messageerror 事件是使用 dispatchEvent 触发的，仅对 addEventListener() 生效，因此这里使用 addEventListener() 来模拟
