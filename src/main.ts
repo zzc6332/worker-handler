@@ -173,11 +173,17 @@ type ProxyObj<D, T extends boolean> = {
     : ProxyData<D[K], false>; // 不是根 Proxy 的情况，
 };
 
-type ArrayWithoutIterator<T> = {
+type ArrWithoutIterator<T> = {
   [P in keyof Array<T>]: P extends typeof Symbol.iterator ? never : Array<T>[P];
 };
 
-export interface ProxyArr<T> extends ArrayWithoutIterator<T> {
+type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
+  [P in keyof A]: A[P] extends (...args: any) => any
+    ? (...args: Parameters<A[P]>) => PromiseLike<ReturnType<A[P]>>
+    : A[P];
+};
+
+interface ProxyArr<T> extends ArrWithRewrittenMethods<T> {
   [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
 }
 
@@ -977,35 +983,6 @@ export class WorkerHandler<A extends CommonActions> {
                   "unshift",
                 ];
                 if (mutatingMethods.indexOf(property) !== -1) await updateArr();
-                if (Array.isArray(methodResult)) {
-                  const promise = new Promise<any[]>(async (resolve) => {
-                    const arrResult = [];
-                    for (let i = 0; i < methodResult.length; i++) {
-                      arrResult[i] = await methodResult[i];
-                    }
-
-                    const arrResultProxy = new Proxy(arrResult, {
-                      get(arrResult, property) {
-                        if (!isNaN(Number(property)) || property === "length") {
-                          const item = (arrResult as any)[property];
-                          const proxyContextX = _this.proxyWeakMap.get(item);
-                          if (proxyContextX) {
-                            return _this.createProxy(
-                              proxyContextX.proxyTargetId,
-                              Symbol.for("reused_proxy"),
-                              null,
-                              proxyContextX.isArray
-                            );
-                          }
-                          return item;
-                        }
-                      },
-                    });
-                    // 这个 arrResultProxy 最终会 resolve 给数组方法返回的 promise
-                    resolve(arrResultProxy);
-                  });
-                  resolve(promise);
-                }
                 resolve(methodResult);
               } catch (error) {
                 reject(error);
