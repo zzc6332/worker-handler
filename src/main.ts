@@ -138,8 +138,7 @@ type MsgData<
 type ExtendedMsgData<A extends CommonActions, D> = {
   readonly actionName: keyof A;
   readonly isProxy: boolean;
-  // readonly data: D;
-  readonly data: ProxyData<D>;
+  readonly data: ReceivedData<D>;
   readonly proxyTargetId: number | undefined;
 };
 
@@ -1233,8 +1232,6 @@ export class WorkerHandler<A extends CommonActions> {
             });
           });
       });
-
-    // newPromise.catch(() => {});
 
     const messageSource: MessageSource<GetDataType<A, K>, A> = {
       ...boundReceivePort,
