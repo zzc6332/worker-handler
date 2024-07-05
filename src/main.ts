@@ -979,14 +979,24 @@ export class WorkerHandler<A extends CommonActions> {
        * @returns
        */
       function getWrappedArrMethod(property: string) {
-        const method = (arr as any)[property];
-
         return function (...args: any[]) {
           const methodResultPromise: Promise<any> = new Promise(
             async (resolve, reject) => {
               try {
                 await drawArr();
-                const methodResult = method.apply(arr, args);
+                let methodResult: any;
+                // 对 forEach 进行重写，使得当 forEach 中接收的回调是异步函数时，当异步函数中的所有 await 执行完毕后，forEach 返回的 Promise 才会被 resolve
+                if (property === "forEach") {
+                  const callback = args[0];
+                  const callbackResults: any[] = [];
+                  for (const i in arr) {
+                    callbackResults.push(callback(arr[i], Number(i)));
+                  }
+                  if (callbackResults[0] instanceof Promise)
+                    await Promise.all(callbackResults);
+                } else {
+                  methodResult = (arr as any)[property].apply(arr, args);
+                }
                 // 会修改原数组的方法的名称
                 const mutatingMethods = [
                   "copyWithin",
