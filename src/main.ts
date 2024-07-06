@@ -146,6 +146,10 @@ type ExtendedMsgData<A extends CommonActions, D> = {
 type ReceivedData<D> =
   D extends StructuredCloneable<Transferable> ? D : ProxyData<D>;
 
+//#endregion
+
+//#region - Proxy 相关
+
 // 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
 type ProxyData<D> = D extends new (...args: any[]) => infer I // Data 拥有构造签名的情况
   ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
@@ -239,6 +243,9 @@ type AdaptedAction<A extends CommonActions> = {
     ...args: ParametersOfAction<Parameters<A[K]>>
   ) => ReturnType<A[K]>;
 };
+
+export type UnwrapPromise<T extends Promise<any> | PromiseLike<any>> =
+  T extends Promise<infer D> ? D : T extends PromiseLike<infer D> ? D : never;
 
 //#endregion
 
