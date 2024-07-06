@@ -143,34 +143,29 @@ type ExtendedMsgData<A extends CommonActions, D> = {
 };
 
 // 将 Worker 中的 Action 传递的数据的类型 D 转换成 Main 中接收到的数据的类型（如果 D 无法被结构化克隆，则 ReceivedData 会是 Proxy 类型）
-type ReceivedData<D, T extends boolean = true> =
-  D extends StructuredCloneable<Transferable> ? D : ProxyData<D, T>;
+type ReceivedData<D> =
+  D extends StructuredCloneable<Transferable> ? D : ProxyData<D>;
 
 // 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
-type ProxyData<D, T extends boolean = true> = D extends new (
-  ...args: any[]
-) => infer I // Data 拥有构造签名的情况
+type ProxyData<D> = D extends new (...args: any[]) => infer I // Data 拥有构造签名的情况
   ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
   : D extends (...args: any[]) => infer R // Data 拥有调用签名的情况
     ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
     : D extends object // 排除上面条件后， Data 是引用数据类型的情况
       ? D extends Array<infer I>
-        ? ProxyObj<D, T> | ProxyArr<I>
-        : ProxyObj<D, T>
+        ? ProxyArr<I>
+        : ProxyObj<D>
       : PromiseLike<D>;
 
 // 对应数据为对象的 Worker Proxy
-export type ProxyObj<D, T extends boolean = true> = {
-  [K in keyof D]: T extends true // 是根 Proxy 的情况
-    ? // 当对象中的值拥有构造签名或调用签名的情况
-      D[K] extends (...args: any[]) => any
-      ? ProxyData<D[K], false>
-      : D[K] extends new (...args: any[]) => any
-        ? ProxyData<D[K], false>
-        : // 对象中的值排除上面条件后的情况
-          PromiseLike<ReceivedData<D[K], false>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
-            ProxyData<D[K], false> // 链式访问的情况，如 const layer2 = await data.layer1.layer2
-    : ProxyData<D[K], false>; // 不是根 Proxy 的情况，
+export type ProxyObj<D> = {
+  [K in keyof D]: D[K] extends (...args: any[]) => any // 对象中的值拥有调用签名的情况
+    ? ProxyData<D[K]>
+    : D[K] extends new (...args: any[]) => any // 对象中的值拥有构造签名的情况
+      ? ProxyData<D[K]>
+      : // 对象中的值排除上面条件后的情况
+        PromiseLike<ReceivedData<D[K]>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
+          ProxyData<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
 };
 
 type ArrWithoutIterator<T> = {
@@ -178,15 +173,61 @@ type ArrWithoutIterator<T> = {
 };
 
 type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
-  [P in keyof A]: A[P] extends (...args: any) => any
-    ? (...args: Parameters<A[P]>) => PromiseLike<ReturnType<A[P]>>
-    : A[P];
+  [P in keyof A]: A[P] extends <U>(
+    callbackfn: (...cbArgs: infer CbArgs) => U,
+    ...rest: infer Rest
+  ) => U[] | U // 数组方法带泛型的情况
+    ? <U>(
+        callbackfn: (
+          ...cbArgs: {
+            [K in keyof CbArgs]: CbArgs[K] extends T ? ProxyObj<T> : CbArgs[K];
+          }
+        ) => U,
+        ...rest: Rest
+      ) => ReturnType<A[P]> extends U ? PromiseLike<U> : PromiseLike<U[]>
+    : A[P] extends (...args: infer Args) => infer Result // 数组方法不带泛型的情况
+      ? (
+          ...args: {
+            [K in keyof Args]: Args[K] extends (
+              ...cbArgs: infer CbArgs
+            ) => infer CbResult
+              ? (
+                  ...cbArgs: {
+                    [K in keyof CbArgs]: CbArgs[K] extends T
+                      ? ProxyObj<T>
+                      : CbArgs[K];
+                  }
+                ) => CbResult
+              : Args[K];
+          }
+        ) => PromiseLike<
+          Result extends T
+            ? ProxyObj<T>
+            : Result extends T[]
+              ? ProxyObj<T>[]
+              : Result
+        >
+      : A[P]; // 不是数组方法的情况
 };
 
 // 对应数据为数组的 Worker Proxy
-interface ProxyArr<T> extends ArrWithRewrittenMethods<T> {
+interface ArrWithAsyncIterator<T>
+  extends Omit<ArrWithRewrittenMethods<T>, "length"> {
   [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
+  length: PromiseLike<number>;
 }
+
+type MergeProxyArr<A, O> = {
+  [K in keyof A | keyof O]: K extends number
+    ? K extends keyof O
+      ? O[K]
+      : never
+    : K extends keyof A
+      ? A[K]
+      : never;
+};
+
+type ProxyArr<I> = MergeProxyArr<ArrWithAsyncIterator<I>, ProxyObj<I[]>>;
 
 type ParametersOfAction<T extends ((...args: any) => any)[]> = {
   [K in keyof T]: ReceivedData<T[K]>;
