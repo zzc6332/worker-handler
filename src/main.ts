@@ -202,7 +202,11 @@ type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
                       : CbArgs[K];
                   }
                 ) => CbResult
-              : Args[K];
+              : Args[K] extends T
+                ? ProxyObj<T>
+                : Args[K] extends T[]
+                  ? ProxyObj<T[]>
+                  : Args[K];
           }
         ) => PromiseLike<
           Result extends T
