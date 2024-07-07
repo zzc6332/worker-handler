@@ -297,15 +297,18 @@ demoWorker
   });
 ~~~
 
-## <span id="Worker_Proxy">Passing Messages That Cannot Be Structured Cloned</span>
+## <span id="Worker_Proxy">Worker Proxy</span>
 
 Starting from `worker-handler v0.2.0`, in environments that support [Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy), messages that cannot be handled by the [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) is also allowed to be passed.
+
+### Basic Usage
 
 If the data sent by `Worker` to `Main` cannot be structured cloned, then a `Proxy` that references this data (hereinafter referred to as `Worker Proxy`) will be created in `Main` as the received data:
 
 - It is possible to operate on `Worker Proxy` in `Main`, and `Worker Proxy` will update these operations to its referenced data.
 - The currently implemented `traps` for `Worker Proxy` are: `get`, `set`, `apply`, `construct`.
-- Since message passing is asynchronous, operations that return results such as `get`, `apply`, `construct` will return a new `promise-like` proxy object, representing the result of the operation. In environments that support the `await` syntax, adding `await` before operating on the `Proxy` (except for `set`) can simulate operations on its referenced data.
+- Since message passing is asynchronous, operations that return results such as `get`, `apply`, `construct` will return a new `promise-like` proxy object, representing the result of the operation. In environments that support the `await` syntax, adding `await` before operating on the `Proxy` (except for `set`) can simulate operations on its referenced data. In most cases, if you need to perform chained operations on `Worker Proxy`, you only need to use the `await` keyword once.
+- If the data accessed by operating the `Worker Proxy` still cannot be structured cloned, a new `Worker Proxy` referencing that data will be obtained .
 
 For example:
 
@@ -346,7 +349,7 @@ onmessage = createOnmessage<DemoActions>({
 ~~~typescript
 // demo.main.ts
 import { WorkerHandler } from "worker-handler/main";
-import { DemoActions } from "./demo.worker";
+import { DemoActions, UnwrapPromise } from "./demo.worker";
 
 const demoWorker = new WorkerHandler<DemoActions>(
   new Worker(new URL("./demo.worker.ts", import.meta.url))
@@ -367,15 +370,269 @@ async function init() {
   console.log(await data.layer1.layer2); // "nested value"
   console.log(await data.layer1.f()); // "result of data.layer1.f()"
   
-  // Since the set operation does not require a reurn result, therefore no await is added in front.
-  data.layer1.layer2 = "Hello Proxy!";
+  // The `set` operation of `Worker Proxy` currently does not fully support the type system, so type assertions are required. Either of the following two methods can be chosen: 
+  (data.layer1.layer2 as any as UnwrapPromise<
+    typeof data.layer1.layer2
+  >) = "Hello Proxy!";
+  // data.layer1.layer2 = "Hello Proxy!" as any;
   console.log(await data.layer1.layer2); // "Hello Proxy!"
 }
 
 init();
 ~~~
 
-## API
+`Worker Proxy` can be used as the `payloads` parameter of `execute()`, or as the parameters of methods called by other `Worker Proxy`. In this way, it will be parsed in the `Worker` as the original data referenced by the `Worker Proxy`.
+
+### <span id="Worker_Array_Proxy">Worker Array Proxy</span>
+
+`Worker Array Proxy` is a special type of `Worker Proxy`. If the data referenced by a `Worker Proxy` is an array, then that `Worker Proxy` is a `Worker Array Proxy`.
+
+Hereafter, the `Worker Array Proxy` will be referred to as `proxyArr`, and the array it references in the `Worker` will be referred to as `ogArr`.
+
+All `Main` examples in this section are based on the following `Worker` example:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableArr: () => ActionResult<
+    { index: number; f: () => string; layer1: { layer2: { index: number } } }[]
+  >;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableArr() {
+    const ogArr = [0, 1, 2].map((_, index) => ({
+      index,
+      f: () => "result of index: " + index,
+      layer1: { layer2: { index } },
+    }));
+    return ogArr;
+  },
+});
+~~~
+
+`Worker Array Proxy` is an array-like object that can simulate some behaviors of arrays:
+
+- Accessing the item by index:
+
+  The `Worker Proxy` that references `ogArr[index]` can be accessed through `proxyArr[index]`. For example:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
+  
+    console.log(await proxyArr[0]); // Worker Proxy
+    console.log(await proxyArr[0].index); // 0
+    console.log(await proxyArr[0].f()); // "result of index: 0"
+    console.log(await proxyArr[0].layer1.layer2.index); // 0
+  }
+  
+  init();
+  ~~~
+
+- Getting the length of `proxyArr`:
+
+  The length of the `ogArr` can be accessed through `await proxyArr.length`. For example:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
+  
+    console.log(await proxyArr.length); // 3
+  }
+  
+  init();
+  ~~~
+
+- Iterating over the items of `proxyArr`:
+
+  The `proxyArr` implements an asynchronous iterator (but not a regular iterator), so it can be iterated using the `for await...of` statement. For example:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    console.log("Iteration executed by `for await...of` is completed!");
+    // --- The console output is as follows: ---
+    // 0
+    // 1
+    // 2
+    // "Iteration executed by `for await...of` is completed!"
+    // --- The console output is as above. ---
+  }
+  
+  init();
+  ~~~
+
+  It can also be iterated by `proxyArr.forEach()`. For example:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    // `proxyArr.forEach()` is executed asynchronously. If you need to wait for the callback function in `forEach()` to complete, you can use the `await` keyword before `forEach()`.
+    await proxyArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("Iteration executed by `forEach()` is completed!");
+    // --- The console output is as follows: ---
+    // 0
+    // 1
+    // 2
+    // "Iteration executed by `forEach()` is completed!"
+    // --- The console output is as above. ---
+  
+    // 如果不使用 await 关键字，那么 forEach() 会晚于之后的同步代码执行
+    proxyArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("Iteration executed by `forEach()` has not started!");
+    // --- The console output is as follows: ---
+    // "Iteration executed by `forEach()` has not started!"
+    // 0
+    // 1
+    // 2
+    // --- The console output is as above. ---
+  }
+  
+  init();
+  ~~~
+
+- Using other array methods:
+
+  Any method with the same name of array methods can be called by `proxyArr`, and all these methods are executed asynchronously.
+
+  If the return value of the original array method is an array, then the method of  `proxyArr` which has the same name of the array method will also return an actual array. For example, using `proxyArr.map()` can quickly convert proxyArr into an actual array:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    const actualArr = await proxyArr.map((item) => item);
+    console.log(actualArr); //  [Worker Proxy, Worker Proxy, Worker Proxy]
+  
+    // Since `actualArr` is an actual array, it has a regular iterator interface and can be iterated using the `for...of` statement.
+    for (const item of actualArr) {
+      console.log(await item.index);
+    }
+    console.log("Iteration executed by `for...of` is completed!")
+    // --- The console output is as follows: ---
+    // 0
+    // 1
+    // 2
+    // "Iteration executed by `for...of` is completed!"
+    // --- The console output is as above. ---
+      
+    // Note that when using `forEach()` to iterate over an actual array, if the callback function passed in is an asynchronous function, it will not wait for the asynchronous operations in the callback to complete.
+    actualArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("Iteration executed by `forEach()` has not started!");
+    // --- The console output is as follows: ---
+    // "Iteration executed by `forEach()` has not started!"
+    // 0
+    // 1
+    // 2
+    // --- The console output is as above. ---
+  }
+  
+  init();
+  ~~~
+
+  The `ogArr` can be modified by methods of the corresponding `proxyArr` like `unshift()` or `push()`:
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    // Remove an item from the head of `ogArr`.
+    console.log(await proxyArr.length); // 3
+    const shifted = await proxyArr.shift();
+    if (shifted) console.log(await shifted?.index); // 0
+    console.log(await proxyArr.length); // 2
+      
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    // --- The console output is as follows: ---
+    // 1
+    // 2
+    // --- The console output is as above. ---
+  
+    // Insert an item at the tail of `ogArr`.
+    if (shifted) console.log(await proxyArr.push(shifted)); // 3
+  
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    // --- The console output is as follows: ---
+    // 1
+    // 2
+    // 0
+    // --- The console output is as above. ---
+  }
+  
+  init();
+  ~~~
+
+## APIs
 
 ### worker-handler/main
 
@@ -473,6 +730,10 @@ Methods:
 
   It extends `EventTarget.addEventListener()` and returns the corresponding `MessageSource` object after being called.
 
+#### UnwrapPromise
+
+`UnwrapPromise` is an utility type that can accept a `Promise` type or a `PromiseLike` type and can extract the type inside it.
+
 ### worker-handler/worker
 
 #### createOnmessage()
@@ -504,3 +765,8 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
   It is because if using `this.$end()` form to send a `terminating response`, `transfer` can be specified more intuitively, and everything that can be done using the return value form can also be done using `this.$end()`. Therefore, the use of the return value form has been simplified, making it more convenient to use in some situations to send `terminating responses`.
 
 - `ActionResult<Data>` is equivalent to `ActionResult<Data | void>` from version `v0.1.x`.
+
+### `v0.2.1`
+
+- <a href="#Worker_Array_Proxy" target="_self">Add Worker Array Proxy feature.</a>
+- When passing messages, if the `transfer` option is not specified, `transferable objects` will not be transferred.

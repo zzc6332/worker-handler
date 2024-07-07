@@ -301,15 +301,18 @@ demoWorker
   });
 ~~~
 
-## <span id="Worker_Proxy">传递无法被结构化克隆的消息</span>
+## <span id="Worker_Proxy">Worker Proxy</span>
 
 从 `worker-handler v0.2.0` 开始，在支持 [Proxy](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Proxy) 的环境中，可以传递无法被[结构化克隆算法](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)处理的消息。
 
-如果 `Worker` 发送给 `Main` 的数据无法被结构化克隆，那么在 `Main` 中会创建一个引用了该数据的 `Proxy` （以下成为 `Worker Proxy`）作为接收到的数据：
+### 基本用法
+
+如果 `Worker` 发送给 `Main` 的数据无法被结构化克隆，那么在 `Main` 中会创建一个引用了该数据的 `Proxy` （以下称为 `Worker Proxy`）作为接收到的数据：
 
 - 可以在 `Main` 中操作 `Worker Proxy` ，`Worker Proxy` 会将这些操作同步给其引用的数据。
 - `Worker Proxy` 目前实现的捕获器有：`get`、`set`、`apply`、`construct`。
-- 由于消息传递是异步的，因此 `get`、`apply`、`construct` 这些会返回结果操作会返回一个 `promise-like` 的新的 `proxy` 对象，表示操作的结果。在支持 `await` 语法的环境中，在对该 `Proxy` 进行（除了 `set` 的）操作前加上 `await` 即可模拟对其引用的数据的操作。
+- 由于消息传递是异步的，因此 `get`、`apply`、`construct` 这些会返回结果操作会返回一个类 `promise` 的新的 `proxy` 对象，表示操作的结果。在支持 `await` 语法的环境中，在对该 `Proxy` 进行（除了 `set` 的）操作前加上 `await` 关键字即可模拟对其引用的数据的操作。大多数情况下，如果需要对 `Worker Proxy` 进行链式调用操作，也只需使用一次 `await` 关键字。
+- 如果操作 `Worker Proxy` 获取到的数据仍无法被结构化克隆，那么将会得到一个新的引用了该数据的 `Worker Proxy`。
 
 示例：
 
@@ -349,7 +352,7 @@ onmessage = createOnmessage<DemoActions>({
 
 ~~~typescript
 // demo.main.ts
-import { WorkerHandler } from "worker-handler/main";
+import { WorkerHandler, UnwrapPromise } from "worker-handler/main";
 import { DemoActions } from "./demo.worker";
 
 const demoWorker = new WorkerHandler<DemoActions>(
@@ -371,17 +374,269 @@ async function init() {
   console.log(await data.layer1.layer2); // "nested value"
   console.log(await data.layer1.f()); // "result of data.layer1.f()"
   
-  // 由于 set 操作不需要返回结果，因此前面不加 await
-  data.layer1.layer2 = "Hello Proxy!";
+  // Worker Proxy 的 set 操作目前没有完全实现类型支持，需进行类型断言，以下两种方式任选其一
+  (data.layer1.layer2 as any as UnwrapPromise<
+    typeof data.layer1.layer2
+  >) = "Hello Proxy!";
+  // data.layer1.layer2 = "Hello Proxy!" as any;
   console.log(await data.layer1.layer2); // "Hello Proxy!"
 }
 
 init();
 ~~~
 
-`Worker Proxy` 可以传递给 `execute()` 的 `payloads` 参数，或通过其它 `Worker Proxy` 调用的方法的参数，这样在 `Worker` 中接收到的将是 `Worker Proxy` 引用的原始数据。
+`Worker Proxy` 可以作为 `execute()` 的 `payloads` 参数，或作为其它 `Worker Proxy` 调用的方法的参数，这样在 `Worker` 中会将其解析未 `Worker Proxy` 引用的原始数据。
 
-## API
+### <span id="Worker_Array_Proxy">Worker Array Proxy</span>
+
+`Worker Array Proxy` 是一种特殊的 `Worker Proxy`。如果一个 `Worker Proxy` 引用的数据是一个数组，那么该 `Worker Proxy` 就是 `Worker Array Proxy`。
+
+以下将 `Worker Array Proxy` 称为 `proxyArr`，将它引用的 `Worker` 中的数组称为 `ogArr`。
+
+本节所有 `Main` 示例都基于以下 `Worker` 示例：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableArr: () => ActionResult<
+    { index: number; f: () => string; layer1: { layer2: { index: number } } }[]
+  >;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableArr() {
+    const ogArr = [0, 1, 2].map((_, index) => ({
+      index,
+      f: () => "result of index: " + index,
+      layer1: { layer2: { index } },
+    }));
+    return ogArr;
+  },
+});
+~~~
+
+`Worker Array Proxy` 是一个类数组，可以模拟数组的一些特性：
+
+- 通过索引访问数据：
+
+  通过 `proxyArr[index]` 可以访问到引用了 `ogArr[index]` 的 `Worker Proxy`。例：
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
+  
+    console.log(await proxyArr[0]); // Worker Proxy
+    console.log(await proxyArr[0].index); // 0
+    console.log(await proxyArr[0].f()); // "result of index: 0"
+    console.log(await proxyArr[0].layer1.layer2.index); // 0
+  }
+  
+  init();
+  ~~~
+
+- 获取数组长度：
+
+  通过 `await proxyArr.length` 可以访问到数组的长度。例：
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
+  
+    console.log(await proxyArr.length); // 3
+  }
+  
+  init();
+  ~~~
+
+- 遍历数组项：
+
+  `proxyArr` 实现了异步迭代器（没有实现普通迭代器），因此可以通过 `for await...of` 语句进行遍历。例：
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    console.log("for await...of 遍历完成！");
+    // --- 控制台输出如下：---
+    // 0
+    // 1
+    // 2
+    // "for await...of 遍历完成！"
+    // --- 控制台输出如上 ---
+  }
+  
+  init();
+  ~~~
+
+  也可以通过 `proxyArr.forEach()` 进行遍历。例：
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    // proxyArr.forEach() 是异步执行的，如果需要等待 forEach() 中的回调函数执行完毕，可以在 forEach() 前使用 await 关键字
+    await proxyArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("forEach() 遍历完成！");
+    // --- 控制台输出如下：---
+    // 0
+    // 1
+    // 2
+    // "forEach() 遍历完成！"
+    // --- 控制台输出如上 ---
+  
+    // 如果不使用 await 关键字，那么 forEach() 会晚于之后的同步代码执行
+    proxyArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("forEach() 遍历未开始！");
+    // --- 控制台输出如下：---
+    // "forEach() 遍历未开始！"
+    // 0
+    // 1
+    // 2
+    // --- 控制台输出如上 ---
+  }
+  
+  init();
+  ~~~
+
+- 使用其它数组方法
+
+  `proxyArr` 可以调用任意同名数组方法，所有同名数组方法都是异步执行的。
+
+  如果原数组方法的返回值是一个数组，那么 `proxyArr` 的同名数组方法也会返回一个真数组。比如使用 `ProxyArr.map()` 可以快速将 `proxyArr` 转换为一个真数组：
+
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    const actualArr = await proxyArr.map((item) => item);
+    console.log(actualArr); //  [Worker Proxy, Worker Proxy, Worker Proxy]
+  
+    // 由于 actualArr 是真数组，因此具有普通迭代器接口，可以使用 for...of 语句进行遍历
+    for (const item of actualArr) {
+      console.log(await item.index);
+    }
+    console.log("for...of 遍历完成！")
+    // --- 控制台输出如下：---
+    // 0
+    // 1
+    // 2
+    // "for...of 遍历完成！"
+    // --- 控制台输出如上 ---
+      
+    // 注意，当对真数组使用 forEach() 遍历时，如果传入的回调函数是异步函数，那么将无法等待该回调的异步函数执行完毕
+    actualArr.forEach(async (item) => {
+      console.log(await item.index);
+    });
+    console.log("forEach() 遍历未开始！");
+    // --- 控制台输出如下：---
+    // "forEach() 遍历未开始！"  
+    // 0
+    // 1
+    // 2
+    // --- 控制台输出如上 ---
+  }
+  
+  init();
+  ~~~
+  
+  如果使用 `unshift()`、`push()`  之类的方法，则可以改变 `proxyArr` 对应的 `ogArr`：
+  
+  ~~~typescript
+  // demo.main.ts
+  import { WorkerHandler } from "worker-handler/main";
+  import { DemoActions } from "./demo.worker";
+  
+  const demoWorker = new WorkerHandler<DemoActions>(
+    new Worker(new URL("./demo.worker.ts", import.meta.url))
+  );
+  
+  async function init() {
+    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+      .promise;
+  
+    // 从 ogArr 头部移除一项
+    console.log(await proxyArr.length); // 3
+    const shifted = await proxyArr.shift();
+    if (shifted) console.log(await shifted?.index); // 0
+    console.log(await proxyArr.length); // 2
+      
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    // --- 控制台输出如下：---
+    // 1
+    // 2
+    // --- 控制台输出如上 ---
+  
+    // 从 ogArr 尾部插入一项
+    if (shifted) console.log(await proxyArr.push(shifted)); // 3
+  
+    for await (const item of proxyArr) {
+      console.log(await item.index);
+    }
+    // --- 控制台输出如下：---
+    // 1
+    // 2
+    // 0
+    // --- 控制台输出如上 ---
+  }
+  
+  init();
+  ~~~
+
+## APIs
 
 ### worker-handler/main
 
@@ -479,6 +734,10 @@ init();
 
   在 `EventTarget.addEventListener()` 的基础上进行了扩展，调用后会返回对应的 `MessageSource` 对象。
 
+#### UnwrapPromise
+
+`UnwrapPromise` 是一个工具类型，可以接受一个 `Promise` 类型或 `PromiseLike` 类型，并提取出其内部的类型。
+
 ### worker-handler/worker
 
 #### createOnmessage()
@@ -511,3 +770,8 @@ init();
 
 - `ActionResult<Data>`  等同于 `v0.1.x` 版本中的 `ActionResult<Data | void>`。
 
+### `v0.2.1`
+
+- <a href="#Worker_Array_Proxy" target="_self">增加 Worker Array Proxy 特性</a>
+
+- 传递消息时，如果没有指定 `transfer` 选项，那么将不会转移可转移对象。
