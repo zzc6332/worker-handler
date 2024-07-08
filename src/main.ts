@@ -567,8 +567,7 @@ export class WorkerHandler<A extends CommonActions> {
         const msgData = res as MsgData<A, D, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
-          Symbol.for("root_proxy"),
-          null,
+          "root_proxy",
           isArray
         );
         return { ...res, data } as ExtendedMsgData<A, D>;
@@ -630,8 +629,7 @@ export class WorkerHandler<A extends CommonActions> {
         const msgData = ev.data as MsgData<A, any, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
-          Symbol.for("root_proxy"),
-          null,
+          "root_proxy",
           isArray
         );
         extendedEvent = { ...extendedEventTmp, ...msgData, data };
@@ -650,7 +648,7 @@ export class WorkerHandler<A extends CommonActions> {
   /**
    * 在 this.handleProxy() 中，当需要获取 Worker 中传递来的 handle_proxy 执行结果消息时调用
    * @param handleProxyMsg
-   * @returns 一个 target 为 promise 的 proxy
+   * @returns 一个 target 为 promise 的 proxy，这个 proxy 是用来处理 Worker Proxy 的链式调用的，而这个 promise 最终会 resolve 出 Worker Proxy
    */
   private receiveProxyData(
     handleProxyMsg: MsgToWorker<
@@ -678,8 +676,7 @@ export class WorkerHandler<A extends CommonActions> {
             resolve(
               this.createProxy(
                 e.data.proxyTargetId,
-                Symbol.for("sub_proxy"),
-                null,
+                "sub_proxy",
                 e.data.isArray
               )
             );
@@ -689,6 +686,7 @@ export class WorkerHandler<A extends CommonActions> {
       };
       this.handleListeners(handleProxylistenerMap);
     });
+    handleProxyMsg.trap; // *****
     return this.createProxy(
       handleProxyMsg.proxyTargetId,
       promise,
@@ -787,71 +785,111 @@ export class WorkerHandler<A extends CommonActions> {
   //#region - createProxy
 
   /**
-   * 收到 worker 传来的带有 port_proxy 或 create_subproxy 标识的消息后，为 Worker 中的对应目标创建一个 proxy
-   * @param proxyTargetId Worker 中定义的 proxy 目标的唯一标识符
-   * @param target proxy 在 Main 中也可以指定一个 target，为该 proxy 添加一些在 Main 中的额外功能
-   * @param parentProperty 接收一个包含一系列属性名的数组，当使用 get 捕捉器时，会将 property 放入该数组末尾，并根据该数组中的属性名依次嵌套获取 Worker 中的目标的嵌套属性
-   * @returns
+   * 创建一个 Worker Proxy
+   * @param proxyTargetId Worker 中定义的 proxy 引用的数据的唯一标识符
+   * @param workerProxyType Worker Proxy 的类型
+   * @param isTargetArray Worker Proxy 引用的数据是不是数组
    */
   private createProxy(
     proxyTargetId: number,
-    target: any = {},
-    parentProperty: keyof any | (keyof any)[] | null = null,
-    isTargetArray: boolean = false
-  ) {
+    workerProxyType: "root_proxy" | "sub_proxy",
+    isTargetArray: boolean
+  ): any;
+
+  /**
+   * 创建一个 Carrier Proxy，它会在对一个 Worker Proxy 进行 get 操作，或对一个 Carrier Proxy 进行 get、apply、construct 操作（即对 Worker Proxy 进行链式调用）时被创建
+   * @param proxyTargetId Worker 中定义的 proxy 引用的数据的唯一标识符
+   * @param carriedPromise 一个会 resolve 出 Worker Promise 或被结构化克隆后的数据的 Promise
+   * @param parentProperty 创建该 Carrier Proxy 的父级 Carrier Proxy 们被访问过的属性。当该 Carrier Proxy 触发 get 捕捉器时，会将 property 放入 parentProperty 的末尾，根据该数组中的属性名在 Worker 中获取到引用的数据的对应属性，如果还需要创建子级的 Carrier Proxy，它会作为新的 parentProperty
+   * @param temporaryProxyId 如果该 Carrier Proxy 是由父级 Carrier Proxy 通过 apply 或 construct 操作创建时需要传入。由于 apply 和 construct 操作在 worker 中产生了新的需要代理的数据，而对应的 proxyTargetId 无法在 Main 中同步取得，因此使用 Main 中创建的 temporaryProxyId 来代替作为唯一标识符。而此时前面的 proxyTargetId 参数将失效。
+   */
+  private createProxy(
+    proxyTargetId: number,
+    carriedPromise: Promise<any>,
+    parentProperty: keyof any | (keyof any)[],
+    temporaryProxyId?: number
+  ): any;
+
+  private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
     const _this = this;
+    //#region - 整理重载参数
+    const proxyType: "Worker Proxy" | "Carrier Proxy" =
+      typeof p1 === "string" ? "Worker Proxy" : "Carrier Proxy";
 
-    //#region - tailProxy
+    let isTargetArray: boolean = false;
 
-    const tailTarget = typeof target === "symbol" ? {} : target;
+    let promiseProxy: any = null;
+    let promiseRevoke: (() => void) | null = null;
 
-    // tailProxy 是最内层的 Proxy，如果 createProxy() 调用时，target 参数传入了一个非 symbol 类型的数据，那么对 tailProxy 的操作会被反应到该数据上，否则 tailProxy 的作用只是提供一个 function(){} 作为 target，使得 dataProxy 的 apply 和 constract 捕获器可以工作
-    const { proxy: tailProxy, revoke: tailProxyRevoke } = Proxy.revocable(
-      function () {},
-      {
+    let parentProperty: keyof any | (keyof any)[] | null = null;
+    let temporaryProxyId: number | undefined;
+
+    if (proxyType === "Worker Proxy") {
+      isTargetArray = p2;
+    } else {
+      const carriedPromise: Promise<any> = p1;
+      parentProperty = p2;
+      temporaryProxyId = p3;
+
+      //#endregion
+
+      //#region - promiseProxy
+
+      // 当创建的是 Carrier Proxy 时，需要再创建一个 promiseProxy 作为 dataProxy 的 target，使得通过 Carrier Proxy 进行的链式调用的结果是一个类 Promise 对象，可以 resolve 出一个 Worker Proxy 或结构化克隆后的数据
+      const { proxy, revoke } = Proxy.revocable(function () {}, {
         get(_, property) {
-          if (property in tailTarget) {
-            const value = tailTarget[property];
+          if (property in carriedPromise) {
+            const value = Reflect.get(carriedPromise, property);
             if (typeof value === "function") {
-              return value.bind(tailTarget);
+              return value.bind(carriedPromise);
             } else {
               return value;
             }
           }
-
-          return Reflect.get(tailTarget, property);
         },
         set(_, property, value) {
-          return Reflect.set(tailTarget, property, value);
+          return Reflect.set(carriedPromise, property, value);
         },
         apply(target, thisArg, argumentsList) {
           return Reflect.apply(target, thisArg, argumentsList);
         },
         has(_, property) {
-          return Reflect.has(tailTarget, property);
+          return Reflect.has(carriedPromise, property);
         },
-      }
-    );
+      });
+      promiseProxy = proxy;
+      promiseRevoke = revoke;
 
-    //#endregion
+      //#endregion
+    }
 
     //#region - dataProxy
 
     // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
     const dataProxyHandler: ProxyHandler<any> = {
       get(_target, property) {
-        if (typeof property === "symbol") return;
-
-        if (typeof target === "symbol" && property === "then") return;
-
-        if (property in _target) {
-          const value = _target[property];
-          if (typeof value === "function") {
-            return value.bind(_target);
-          } else {
-            return value;
+        if (proxyType === "Carrier Proxy") {
+          // 当前创建的是 Carrier Proxy 时，dataProxy 的 target 是 promiseProxy，需要代理对它的 get 操作
+          if (property in _target) {
+            const value = _target[property];
+            if (typeof value === "function") {
+              return value.bind(_target);
+            } else {
+              return value;
+            }
           }
+        } else {
+          // 当前创建的是 Worker Proxy 时，如果对其进行 await 操作，需进行无视，否则调用对应方法的消息将被发送到 Worker 中，而传入的回调函数无法被结构化克隆
+          if (
+            property === "then" ||
+            property === "catch" ||
+            property === "finally"
+          )
+            return;
         }
+
+        // symbol 类型的数据无法被传送到 Worker 中
+        if (typeof property === "symbol") return;
 
         let propertyValue: keyof any | (keyof any)[];
 
@@ -972,7 +1010,7 @@ export class WorkerHandler<A extends CommonActions> {
     };
 
     const { proxy: dataProxy, revoke: dataProxyRevoke } = Proxy.revocable(
-      tailProxy,
+      promiseProxy || function () {},
       dataProxyHandler
     );
 
@@ -1088,7 +1126,12 @@ export class WorkerHandler<A extends CommonActions> {
 
       const arrayProxyHandler: ProxyHandler<Array<any>> = {
         get(arr, property) {
-          if (property === "then" || typeof property === "symbol") {
+          if (
+            property === "then" ||
+            property === "catch" ||
+            property === "finally" ||
+            typeof property === "symbol"
+          ) {
             if (property === Symbol.asyncIterator)
               return async function* () {
                 await drawArr();
@@ -1131,8 +1174,8 @@ export class WorkerHandler<A extends CommonActions> {
 
     // 将关联的 Proxy 放入 associatedProxies 集合中
     const associatedProxies = new Set();
-    associatedProxies.add(tailProxy);
     associatedProxies.add(dataProxy);
+    if (promiseProxy) associatedProxies.add(promiseProxy);
     if (arrayProxy) associatedProxies.add(arrayProxy);
 
     this.proxyWeakMap.set(dataProxy, {
@@ -1141,17 +1184,19 @@ export class WorkerHandler<A extends CommonActions> {
       revoke: dataProxyRevoke,
       associatedProxies,
       isRevoked: false,
-      isArray: isTargetArray,
+      isArray: isTargetArray || false,
     });
 
-    this.proxyWeakMap.set(tailProxy, {
-      proxyTargetId,
-      parentProperty,
-      revoke: tailProxyRevoke,
-      associatedProxies,
-      isRevoked: false,
-      isArray: isTargetArray,
-    });
+    if (promiseProxy && promiseRevoke) {
+      this.proxyWeakMap.set(promiseProxy, {
+        proxyTargetId,
+        parentProperty,
+        revoke: promiseRevoke,
+        associatedProxies,
+        isRevoked: false,
+        isArray: isTargetArray || false,
+      });
+    }
 
     if (arrayProxy && arrayProxyRevoke)
       this.proxyWeakMap.set(arrayProxy, {
@@ -1160,7 +1205,7 @@ export class WorkerHandler<A extends CommonActions> {
         revoke: arrayProxyRevoke,
         associatedProxies,
         isRevoked: false,
-        isArray: isTargetArray,
+        isArray: true,
       });
 
     //#endregion
