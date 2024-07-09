@@ -120,10 +120,14 @@ type ActionThis<
 
 //#region - 相关变量与工具函数
 
-let currentProxyTargetId = 0;
+// proxyTargetId 是 Main 中的 Worker Proxy 应用的数据的唯一标识符
+let currentProxyTargetId = 1;
 
 // proxyTargetTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
 const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | null)[] = [];
+
+// depositingDatas 数组中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
+const depositingDatas: any[] = [];
 
 //#region - postActionMessage
 
@@ -411,14 +415,21 @@ export function createOnmessage<A extends CommonActions>(
       //#region - handle_proxy
     } else if (type === "handle_proxy") {
       const e = ev as MessageEvent<MsgToWorker<"handle_proxy">>;
-      const { trap, proxyTargetId } = e.data;
+      const { trap, proxyTargetId, temporaryProxyIdForPickingUp } = e.data;
 
       //#region - get trap
       if (trap === "get") {
         const { property, getterId } = e.data;
         let data: any;
-        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-        const { target } = proxyTargetTreeNode.value;
+        let target: any;
+        let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
+        if (temporaryProxyIdForPickingUp) {
+          target = depositingDatas[temporaryProxyIdForPickingUp];
+          delete depositingDatas[temporaryProxyIdForPickingUp];
+        } else {
+          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          target = proxyTargetTreeNode.value.target;
+        }
         if (!Array.isArray(property)) {
           data = target[property!];
         } else {
@@ -430,15 +441,26 @@ export function createOnmessage<A extends CommonActions>(
 
         //#region - set trap
       } else if (trap === "set") {
-        const { property, value, valueProxyContext } = e.data;
+        const {
+          property,
+          value,
+          valueProxyContext,
+          temporaryProxyIdForPickingUp,
+        } = e.data;
 
         // 判断 value 是引用了 Worker 数据的 Proxy，还是可结构化克隆的数据
         const _value = valueProxyContext
           ? getTargetByProxyContext(valueProxyContext)
           : value;
 
-        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-        const { target } = proxyTargetTreeNode.value;
+        let target: any;
+        if (temporaryProxyIdForPickingUp) {
+          target = depositingDatas[temporaryProxyIdForPickingUp];
+          depositingDatas[temporaryProxyIdForPickingUp];
+        } else {
+          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          target = proxyTargetTreeNode.value.target;
+        }
         if (!Array.isArray(property)) {
           Reflect.set(target, property, _value);
         } else {
@@ -459,6 +481,8 @@ export function createOnmessage<A extends CommonActions>(
           argProxyContexts, // argumentsList 中如果存在元素是在 Main 中是引用了 Worker 数据的 proxy，那么他们会以 ProxyContext 的形式传递到这里
           thisProxyContext, // thisArg 如果在 Main 中是引用了 Worker 数据的 proxy，那么会以 ProxyContext 的形式传递到这里
           thisArg: _thisArg, // 如果 Main 中传递的 thisArg 可以被结构化克隆，则会在这里被接收到，否则这里的 thisArg 接收 undefined
+          temporaryProxyIdForDepositing, // 使用 temporaryProxyIdForDepositing 作为唯一标识符寄存 apply 操作的结果数据
+          temporaryProxyIdForPickingUp, // temporaryProxyIdForPickingUp 用于取出使用 temporaryProxyIdForDepositing 寄存的数据
         } = e.data;
 
         //#region - 处理 thisArg
@@ -485,10 +509,18 @@ export function createOnmessage<A extends CommonActions>(
         });
         //#endregion
 
-        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-        const { target } = proxyTargetTreeNode.value;
+        let target: any;
+        if (temporaryProxyIdForPickingUp) {
+          target = depositingDatas[temporaryProxyIdForPickingUp];
+          depositingDatas[temporaryProxyIdForPickingUp];
+        } else {
+          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          target = proxyTargetTreeNode.value.target;
+        }
         const fn = parentProperty.reduce((prev, cur) => prev[cur], target);
         const result = fn.apply(thisArg, _argumentsList);
+
+        depositingDatas[temporaryProxyIdForDepositing] = result;
 
         postProxyData(proxyTargetId, getterId, result);
 
@@ -496,8 +528,14 @@ export function createOnmessage<A extends CommonActions>(
 
         //#region - construct trap
       } else if (trap === "construct") {
-        const { getterId, parentProperty, argumentsList, argProxyContexts } =
-          e.data;
+        const {
+          getterId,
+          parentProperty,
+          argumentsList,
+          argProxyContexts,
+          temporaryProxyIdForDepositing,
+          temporaryProxyIdForPickingUp,
+        } = e.data;
 
         // 处理 argumentsList
         const _argumentsList = [...argumentsList];
@@ -507,13 +545,21 @@ export function createOnmessage<A extends CommonActions>(
           }
         });
 
-        const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-        const { target } = proxyTargetTreeNode.value;
+        let target: any;
+        if (temporaryProxyIdForPickingUp) {
+          target = depositingDatas[temporaryProxyIdForPickingUp];
+          depositingDatas[temporaryProxyIdForPickingUp];
+        } else {
+          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          target = proxyTargetTreeNode.value.target;
+        }
         const constructor = parentProperty.reduce(
           (prev, cur) => prev[cur],
           target
         );
         const instance = new constructor(..._argumentsList);
+
+        depositingDatas[temporaryProxyIdForDepositing] = instance;
 
         postProxyData(proxyTargetId, getterId, instance);
 
@@ -541,7 +587,7 @@ export function createOnmessage<A extends CommonActions>(
       const e = ev as MessageEvent<MsgToWorker<"update_array">>;
       const {
         proxyTargetId,
-        itemProxyContexts, // 要更新的数组中，无法结构化克隆的部分会已 ProxyContext 的形式传递到这里
+        itemProxyContexts, // 要更新的数组中，无法结构化克隆的部分会以 ProxyContext 的形式传递到这里
         cloneableItemsInArr, // 要更新的数组中，可结构化克隆的部分
       } = e.data;
 

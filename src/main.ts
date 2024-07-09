@@ -49,6 +49,8 @@ type MsgToWorkerBasic<
   thisArg: any;
   itemProxyContexts: (ProxyContext | undefined)[];
   cloneableItemsInArr: any[];
+  temporaryProxyIdForDepositing: number;
+  temporaryProxyIdForPickingUp: number | null;
 };
 
 export type MsgToWorker<
@@ -69,7 +71,12 @@ export type MsgToWorker<
     ? P extends "get"
       ? Pick<
           MsgToWorkerBasic<T, A, K, P>,
-          "type" | "proxyTargetId" | "trap" | "getterId" | "property"
+          | "type"
+          | "proxyTargetId"
+          | "trap"
+          | "getterId"
+          | "property"
+          | "temporaryProxyIdForPickingUp"
         >
       : P extends "set"
         ? Pick<
@@ -80,6 +87,7 @@ export type MsgToWorker<
             | "property"
             | "value"
             | "valueProxyContext"
+            | "temporaryProxyIdForPickingUp"
           >
         : P extends "apply"
           ? Pick<
@@ -93,6 +101,8 @@ export type MsgToWorker<
               | "argProxyContexts"
               | "thisProxyContext"
               | "thisArg"
+              | "temporaryProxyIdForDepositing"
+              | "temporaryProxyIdForPickingUp"
             >
           : P extends "construct"
             ? Pick<
@@ -104,6 +114,8 @@ export type MsgToWorker<
                 | "getterId"
                 | "parentProperty"
                 | "argProxyContexts"
+                | "temporaryProxyIdForDepositing"
+                | "temporaryProxyIdForPickingUp"
               >
             : never
     : T extends "revoke_proxy"
@@ -151,10 +163,14 @@ type ReceivedData<D> =
 //#region - Proxy 相关
 
 // 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
-type ProxyData<D> = D extends new (...args: any[]) => infer I // Data 拥有构造签名的情况
-  ? new (...args: ConstructorParameters<D>) => PromiseLike<ReceivedData<I>>
-  : D extends (...args: any[]) => infer R // Data 拥有调用签名的情况
-    ? (...args: Parameters<D>) => PromiseLike<ReceivedData<R>>
+type ProxyData<D> = D extends new (...args: any[]) => infer Instance // Data 拥有构造签名的情况
+  ? new (
+      ...args: ConstructorParameters<D>
+    ) => PromiseLike<ReceivedData<Instance>> & ProxyData<Instance>
+  : D extends (...args: any[]) => infer Result // Data 拥有调用签名的情况
+    ? (
+        ...args: Parameters<D>
+      ) => PromiseLike<ReceivedData<Result>> & ProxyData<Result>
     : D extends object // 排除上面条件后， Data 是引用数据类型的情况
       ? D extends Array<infer I>
         ? ProxyArr<I>
@@ -686,11 +702,19 @@ export class WorkerHandler<A extends CommonActions> {
       };
       this.handleListeners(handleProxylistenerMap);
     });
-    handleProxyMsg.trap; // *****
+    let temporaryProxyIdForPickingUp: number | null = null;
+    if (
+      handleProxyMsg.trap === "apply" ||
+      handleProxyMsg.trap === "construct"
+    ) {
+      temporaryProxyIdForPickingUp =
+        handleProxyMsg.temporaryProxyIdForDepositing;
+    }
     return this.createProxy(
       handleProxyMsg.proxyTargetId,
       promise,
-      (handleProxyMsg as any).property
+      (handleProxyMsg as any).property,
+      temporaryProxyIdForPickingUp || undefined
     );
   }
 
@@ -760,10 +784,13 @@ export class WorkerHandler<A extends CommonActions> {
   //#region - 私有属性
 
   // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
-  private proxyGetterId = 0;
+  private currentProxyGetterId = 1;
 
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
   private proxyWeakMap = new WeakMap<any, ProxyContextX>();
+
+  // 当 Worker Proxy 通过 apply 操作或 construct 操作在 Worker 中产生了新的需要代理的数据，而无法及时在 Main 中获取其 proxyTargetId 时，使用这个临时的 temporaryProxyId 作为唯一标识符，每次调用 Worker Proxy 的 apply 或 construct 捕捉器时递增
+  private currentTemporaryProxyId = 1;
 
   //#endregion
 
@@ -822,14 +849,14 @@ export class WorkerHandler<A extends CommonActions> {
     let promiseRevoke: (() => void) | null = null;
 
     let parentProperty: keyof any | (keyof any)[] | null = null;
-    let temporaryProxyId: number | undefined;
+    let temporaryProxyId: number | null = null;
 
     if (proxyType === "Worker Proxy") {
       isTargetArray = p2;
     } else {
       const carriedPromise: Promise<any> = p1;
       parentProperty = p2;
-      temporaryProxyId = p3;
+      temporaryProxyId = p3 || null;
 
       //#endregion
 
@@ -911,7 +938,8 @@ export class WorkerHandler<A extends CommonActions> {
           trap: "get",
           proxyTargetId,
           property: propertyValue,
-          getterId: _this.proxyGetterId++,
+          getterId: _this.currentProxyGetterId++,
+          temporaryProxyIdForPickingUp: temporaryProxyId,
         });
       },
 
@@ -949,6 +977,7 @@ export class WorkerHandler<A extends CommonActions> {
               property: propertyValue,
               value: null,
               valueProxyContext,
+              temporaryProxyIdForPickingUp: temporaryProxyId,
             });
           } else return false;
         }
@@ -959,6 +988,7 @@ export class WorkerHandler<A extends CommonActions> {
           proxyTargetId,
           property: propertyValue,
           value,
+          temporaryProxyIdForPickingUp: temporaryProxyId,
         });
       },
 
@@ -974,7 +1004,7 @@ export class WorkerHandler<A extends CommonActions> {
           type: "handle_proxy",
           trap: "apply",
           proxyTargetId,
-          getterId: _this.proxyGetterId++,
+          getterId: _this.currentProxyGetterId++,
           parentProperty: Array.isArray(parentProperty)
             ? parentProperty
             : parentProperty
@@ -985,6 +1015,8 @@ export class WorkerHandler<A extends CommonActions> {
           thisProxyContext:
             _this.utilsForProxy.reduceProxyContext(_thisProxyContext),
           thisArg: _thisProxyContext ? undefined : thisArg,
+          temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
+          temporaryProxyIdForPickingUp: temporaryProxyId,
         });
       },
 
@@ -997,7 +1029,7 @@ export class WorkerHandler<A extends CommonActions> {
           type: "handle_proxy",
           trap: "construct",
           proxyTargetId,
-          getterId: _this.proxyGetterId++,
+          getterId: _this.currentProxyGetterId++,
           parentProperty: Array.isArray(parentProperty)
             ? parentProperty
             : parentProperty
@@ -1005,6 +1037,8 @@ export class WorkerHandler<A extends CommonActions> {
               : [],
           argumentsList,
           argProxyContexts,
+          temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
+          temporaryProxyIdForPickingUp: temporaryProxyId,
         });
       },
     };
@@ -1184,7 +1218,7 @@ export class WorkerHandler<A extends CommonActions> {
       revoke: dataProxyRevoke,
       associatedProxies,
       isRevoked: false,
-      isArray: isTargetArray || false,
+      isArray: isTargetArray,
     });
 
     if (promiseProxy && promiseRevoke) {
@@ -1194,7 +1228,7 @@ export class WorkerHandler<A extends CommonActions> {
         revoke: promiseRevoke,
         associatedProxies,
         isRevoked: false,
-        isArray: isTargetArray || false,
+        isArray: isTargetArray,
       });
     }
 
