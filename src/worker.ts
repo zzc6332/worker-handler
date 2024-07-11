@@ -126,8 +126,8 @@ let currentProxyTargetId = 1;
 // proxyTargetTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
 const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | null)[] = [];
 
-// depositingDatas 数组中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
-const depositingDatas: any[] = [];
+// depositedDatas 数组中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
+const depositedDatas: any[] = [];
 
 //#region - postActionMessage
 
@@ -288,7 +288,7 @@ function postProxyData(
  */
 function getTargetByProxyContext(proxyContext: ProxyContext) {
   if (proxyContext.temporaryProxyIdForPickingUp) {
-    return depositingDatas[proxyContext.temporaryProxyIdForPickingUp];
+    return depositedDatas[proxyContext.temporaryProxyIdForPickingUp];
   }
   // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
   const proxyTargetTreeNode = getProxyTargetTreeNode(
@@ -306,6 +306,21 @@ function getTargetByProxyContext(proxyContext: ProxyContext) {
 
   return parentProperty.reduce((prev, cur) => prev[cur], rootProxyTarget);
 }
+
+/**
+ * 向 depositedDatas 中存储临时数据的同时，清除 depositedDatas 中不需要的临时数据
+ * @param temporaryProxyIdForDepositing
+ * @param data
+ */
+function depositeData(temporaryProxyIdForDepositing: number, data: any) {
+  depositedDatas[temporaryProxyIdForDepositing] = data;
+  // 临时数据大多数情况下可以在下一个临时数据被存储时就删除，除了当临时数据是对象的情况下，有可能在调用其方法时会将其作为 this 引用，因此多保留一回合
+  if (typeof depositedDatas[temporaryProxyIdForDepositing - 1] !== "object") {
+    delete depositedDatas[temporaryProxyIdForDepositing - 1];
+  }
+  delete depositedDatas[temporaryProxyIdForDepositing - 2];
+}
+
 //#endregion
 
 //#endregion
@@ -427,7 +442,7 @@ export function createOnmessage<A extends CommonActions>(
         let target: any;
         let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
         if (temporaryProxyIdForPickingUp) {
-          target = depositingDatas[temporaryProxyIdForPickingUp];
+          target = depositedDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -439,7 +454,7 @@ export function createOnmessage<A extends CommonActions>(
         }
 
         if (temporaryProxyIdForDepositing)
-          depositingDatas[temporaryProxyIdForDepositing] = data;
+          depositeData(temporaryProxyIdForDepositing, data);
 
         postProxyData(proxyTargetId, getterId, data, proxyTargetTreeNode);
 
@@ -461,7 +476,7 @@ export function createOnmessage<A extends CommonActions>(
 
         let target: any;
         if (temporaryProxyIdForPickingUp) {
-          target = depositingDatas[temporaryProxyIdForPickingUp];
+          target = depositedDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -516,7 +531,7 @@ export function createOnmessage<A extends CommonActions>(
 
         let fn: (...args: any) => any;
         if (temporaryProxyIdForPickingUp) {
-          fn = depositingDatas[temporaryProxyIdForPickingUp];
+          fn = depositedDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
@@ -525,7 +540,7 @@ export function createOnmessage<A extends CommonActions>(
 
         const result = fn.apply(thisArg, _argumentsList);
 
-        depositingDatas[temporaryProxyIdForDepositing] = result;
+        depositeData(temporaryProxyIdForDepositing, result);
 
         postProxyData(proxyTargetId, getterId, result);
 
@@ -552,7 +567,7 @@ export function createOnmessage<A extends CommonActions>(
 
         let constructor: new (...args: any[]) => any;
         if (temporaryProxyIdForPickingUp) {
-          constructor = depositingDatas[temporaryProxyIdForPickingUp];
+          constructor = depositedDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
@@ -561,7 +576,7 @@ export function createOnmessage<A extends CommonActions>(
 
         const instance = new constructor(..._argumentsList);
 
-        depositingDatas[temporaryProxyIdForDepositing] = instance;
+        depositeData(temporaryProxyIdForDepositing, instance);
 
         postProxyData(proxyTargetId, getterId, instance);
 
