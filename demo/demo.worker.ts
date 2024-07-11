@@ -22,7 +22,10 @@ export type DemoActions = {
     count: number;
     increase: () => void;
     Person: typeof Person;
-    layer1: { layer2: string; f: () => string };
+    layer1: {
+      layer2: string;
+      getString: () => () => { value: string; Person: typeof Person };
+    };
   }>;
 
   returnUncloneableDataWithOffscreenCanvas: () => ActionResult<{
@@ -37,11 +40,9 @@ export type DemoActions = {
     imageBitmap: ImageBitmap | null;
   }) => ActionResult<boolean>;
 
-  receiveProxyData2: (data: {
-    f: () => void;
-    offscreen: OffscreenCanvas;
-    imageBitmap: ImageBitmap | null;
-  }) => ActionResult<boolean>;
+  returnUncloneableArr: () => ActionResult<
+    { index: number; f: () => string; layer1: { layer2: { index: number } } }[]
+  >;
 
   // Insert ActionTypes above this line
 };
@@ -88,7 +89,10 @@ onmessage = createOnmessage<DemoActions>({
       Person,
       layer1: {
         layer2: "nested value",
-        f: () => "result of data.layer1.f()",
+        getString: () => () => ({
+          value: "result of data.layer1.getString()",
+          Person,
+        }),
       },
     };
     this.$post(data);
@@ -111,8 +115,13 @@ onmessage = createOnmessage<DemoActions>({
     );
   },
 
-  async receiveProxyData2(data) {
-    return this.receiveProxyData(data);
+  async returnUncloneableArr() {
+    const result = [0, 1, 2].map((_, index) => ({
+      index,
+      f: () => "index: " + index,
+      layer1: { layer2: { index } },
+    }));
+    return result;
   },
 
   // Insert Actions above this line
@@ -120,4 +129,8 @@ onmessage = createOnmessage<DemoActions>({
 
 class Person {
   constructor(public name: string) {}
+
+  getName() {
+    return this.name;
+  }
 }

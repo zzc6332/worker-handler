@@ -1,4 +1,4 @@
-import { WorkerHandler } from "src/main";
+import { ProxyObj, WorkerHandler } from "src/main";
 import { DemoActions } from "./demo.worker";
 
 const worker = new WorkerHandler<DemoActions>(
@@ -24,17 +24,16 @@ export const returnUncloneableDataExecutor = () =>
 export const returnUncloneableDataWithOffscreenCanvasExecutor = () =>
   worker.execute("returnUncloneableDataWithOffscreenCanvas");
 
-export const receiveProxyDataExecutor = (data: {
-  f: () => void;
-  offscreen: OffscreenCanvas;
-  imageBitmap: ImageBitmap | null;
-}) => worker.execute("receiveProxyData", 0, data);
+export const receiveProxyDataExecutor = (
+  data: ProxyObj<{
+    f: () => void;
+    offscreen: OffscreenCanvas;
+    imageBitmap: ImageBitmap | null;
+  }>
+) => worker.execute("receiveProxyData", 0, data);
 
-export const receiveProxyData2Executor = (data: {
-  f: () => void;
-  offscreen: OffscreenCanvas;
-  imageBitmap: ImageBitmap | null;
-}) => worker.execute("receiveProxyData2", 0, data);
+export const returnUncloneableArrExecutor = () =>
+  worker.execute("returnUncloneableArr");
 
 // Insert Executors above this line
 
