@@ -77,7 +77,7 @@ export type MsgToWorker<
           | "getterId"
           | "property"
           | "temporaryProxyIdForPickingUp"
-        >
+        > & { temporaryProxyIdForDepositing: number | null }
       : P extends "set"
         ? Pick<
             MsgToWorkerBasic<T, A, K, P>,
@@ -702,14 +702,11 @@ export class WorkerHandler<A extends CommonActions> {
       };
       this.handleListeners(handleProxylistenerMap);
     });
-    let temporaryProxyIdForPickingUp: number | null = null;
-    if (
-      handleProxyMsg.trap === "apply" ||
-      handleProxyMsg.trap === "construct"
-    ) {
-      temporaryProxyIdForPickingUp =
-        handleProxyMsg.temporaryProxyIdForDepositing;
-    }
+
+    // 在对 Carrier Proxy 的链式操作中，将上一次操作产生的 temporaryProxyId 传递给下一个 temporaryProxyId
+    const temporaryProxyIdForPickingUp =
+      handleProxyMsg.temporaryProxyIdForDepositing;
+
     return this.createProxy(
       handleProxyMsg.proxyTargetId,
       promise,
@@ -828,7 +825,7 @@ export class WorkerHandler<A extends CommonActions> {
    * @param proxyTargetId Worker 中定义的 proxy 引用的数据的唯一标识符
    * @param carriedPromise 一个会 resolve 出 Worker Promise 或被结构化克隆后的数据的 Promise
    * @param parentProperty 创建该 Carrier Proxy 的父级 Carrier Proxy 们被访问过的属性。当该 Carrier Proxy 触发 get 捕捉器时，会将 property 放入 parentProperty 的末尾，根据该数组中的属性名在 Worker 中获取到引用的数据的对应属性，如果还需要创建子级的 Carrier Proxy，它会作为新的 parentProperty
-   * @param temporaryProxyId 如果该 Carrier Proxy 是由父级 Carrier Proxy 通过 apply 或 construct 操作创建时需要传入。由于 apply 和 construct 操作在 worker 中产生了新的需要代理的数据，而对应的 proxyTargetId 无法在 Main 中同步取得，因此使用 Main 中创建的 temporaryProxyId 来代替作为唯一标识符。而此时前面的 proxyTargetId 参数将失效。
+   * @param temporaryProxyId 如果该 Carrier Proxy 的创建链上存在对 Carrier Proxy 进行 apply 或 construct 操作而产生了 temporaryProxyId，那么则需要将最近的 temporaryProxyId 传入。由于 apply 和 construct 操作在 worker 中产生了新的需要代理的数据，而对应的 proxyTargetId 无法在 Main 中同步取得，因此使用 Main 中创建的 temporaryProxyId 来代替作为唯一标识符。到了 Worker 中，前面的 proxyTargetId 参数和 parentProperty 参数会配合以获取 target 的，而 temporaryProxyId 会取代它们来获取 target。
    */
   private createProxy(
     proxyTargetId: number,
@@ -939,6 +936,7 @@ export class WorkerHandler<A extends CommonActions> {
           proxyTargetId,
           property: propertyValue,
           getterId: _this.currentProxyGetterId++,
+          temporaryProxyIdForDepositing: temporaryProxyId, // 对于 Carrier Proxy 的 get 操作，如果它的创建链上出现过 temporaryProxyId，那么需要将最近的一个 temporaryProxyId 继续传递下去
           temporaryProxyIdForPickingUp: temporaryProxyId,
         });
       },

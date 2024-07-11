@@ -419,7 +419,7 @@ export function createOnmessage<A extends CommonActions>(
 
       //#region - get trap
       if (trap === "get") {
-        const { property, getterId } = e.data;
+        const { property, getterId, temporaryProxyIdForDepositing } = e.data;
         let data: any;
         let target: any;
         let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
@@ -435,6 +435,10 @@ export function createOnmessage<A extends CommonActions>(
         } else {
           data = property.reduce((preV, cur) => preV[cur], target);
         }
+
+        if (temporaryProxyIdForDepositing)
+          depositingDatas[temporaryProxyIdForDepositing] = data;
+
         postProxyData(proxyTargetId, getterId, data, proxyTargetTreeNode);
 
         //#endregion
@@ -509,15 +513,17 @@ export function createOnmessage<A extends CommonActions>(
         });
         //#endregion
 
-        let target: any;
+        // let target: any;
+        let fn: (...args: any) => any;
         if (temporaryProxyIdForPickingUp) {
-          target = depositingDatas[temporaryProxyIdForPickingUp];
+          fn = depositingDatas[temporaryProxyIdForPickingUp];
           depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-          target = proxyTargetTreeNode.value.target;
+          const target = proxyTargetTreeNode.value.target;
+          fn = parentProperty.reduce((prev, cur) => prev[cur], target);
         }
-        const fn = parentProperty.reduce((prev, cur) => prev[cur], target);
+
         const result = fn.apply(thisArg, _argumentsList);
 
         depositingDatas[temporaryProxyIdForDepositing] = result;
@@ -545,18 +551,17 @@ export function createOnmessage<A extends CommonActions>(
           }
         });
 
-        let target: any;
+        // let target: any;
+        let constructor: new (...args: any[]) => any;
         if (temporaryProxyIdForPickingUp) {
-          target = depositingDatas[temporaryProxyIdForPickingUp];
+          constructor = depositingDatas[temporaryProxyIdForPickingUp];
           depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
-          target = proxyTargetTreeNode.value.target;
+          const target = proxyTargetTreeNode.value.target;
+          constructor = parentProperty.reduce((prev, cur) => prev[cur], target);
         }
-        const constructor = parentProperty.reduce(
-          (prev, cur) => prev[cur],
-          target
-        );
+
         const instance = new constructor(..._argumentsList);
 
         depositingDatas[temporaryProxyIdForDepositing] = instance;
