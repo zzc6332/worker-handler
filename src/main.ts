@@ -16,6 +16,7 @@ type MsgToWorkerType =
 export interface ProxyContext {
   proxyTargetId: number;
   parentProperty: keyof any | (keyof any)[] | null;
+  temporaryProxyIdForPickingUp: number | null;
 }
 
 interface ProxyContextX extends ProxyContext {
@@ -119,7 +120,10 @@ export type MsgToWorker<
               >
             : never
     : T extends "revoke_proxy"
-      ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId">
+      ? Pick<
+          MsgToWorkerBasic<T>,
+          "type" | "proxyTargetId" | "temporaryProxyIdForPickingUp"
+        >
       : T extends "update_array"
         ? Pick<
             MsgToWorkerBasic<T>,
@@ -752,8 +756,9 @@ export class WorkerHandler<A extends CommonActions> {
      */
     reduceProxyContext(proxyContext: any): any {
       if (proxyContext) {
-        const { proxyTargetId, parentProperty } = proxyContext;
-        return { proxyTargetId, parentProperty };
+        const { proxyTargetId, parentProperty, temporaryProxyIdForPickingUp } =
+          proxyContext;
+        return { proxyTargetId, parentProperty, temporaryProxyIdForPickingUp };
       }
     },
     /**
@@ -766,8 +771,16 @@ export class WorkerHandler<A extends CommonActions> {
       const newArgumentsList = argumentsList.map((arg, index) => {
         const argProxyContext = this.proxyWeakMap.get(arg);
         if (argProxyContext) {
-          const { proxyTargetId, parentProperty } = argProxyContext;
-          argProxyContexts[index] = { proxyTargetId, parentProperty };
+          const {
+            proxyTargetId,
+            parentProperty,
+            temporaryProxyIdForPickingUp,
+          } = argProxyContext;
+          argProxyContexts[index] = {
+            proxyTargetId,
+            parentProperty,
+            temporaryProxyIdForPickingUp,
+          };
           return null;
         }
         return arg;
@@ -825,13 +838,13 @@ export class WorkerHandler<A extends CommonActions> {
    * @param proxyTargetId Worker 中定义的 proxy 引用的数据的唯一标识符
    * @param carriedPromise 一个会 resolve 出 Worker Promise 或被结构化克隆后的数据的 Promise
    * @param parentProperty 创建该 Carrier Proxy 的父级 Carrier Proxy 们被访问过的属性。当该 Carrier Proxy 触发 get 捕捉器时，会将 property 放入 parentProperty 的末尾，根据该数组中的属性名在 Worker 中获取到引用的数据的对应属性，如果还需要创建子级的 Carrier Proxy，它会作为新的 parentProperty
-   * @param temporaryProxyId 如果该 Carrier Proxy 的创建链上存在对 Carrier Proxy 进行 apply 或 construct 操作而产生了 temporaryProxyId，那么则需要将最近的 temporaryProxyId 传入。由于 apply 和 construct 操作在 worker 中产生了新的需要代理的数据，而对应的 proxyTargetId 无法在 Main 中同步取得，因此使用 Main 中创建的 temporaryProxyId 来代替作为唯一标识符。到了 Worker 中，前面的 proxyTargetId 参数和 parentProperty 参数会配合以获取 target 的，而 temporaryProxyId 会取代它们来获取 target。
+   * @param temporaryProxyIdForPickingUp 如果该 Carrier Proxy 的创建链上存在对 Carrier Proxy 进行 apply 或 construct 操作而产生了 temporaryProxyId，那么则需要将最近的 temporaryProxyId 传入。由于 apply 和 construct 操作在 worker 中产生了新的需要代理的数据，而对应的 proxyTargetId 无法在 Main 中同步取得，因此使用 Main 中创建的 temporaryProxyId 来代替作为唯一标识符。到了 Worker 中，前面的 proxyTargetId 参数和 parentProperty 参数会配合以获取 target 的，而 temporaryProxyId 会取代它们来获取 target。
    */
   private createProxy(
     proxyTargetId: number,
     carriedPromise: Promise<any>,
     parentProperty: keyof any | (keyof any)[],
-    temporaryProxyId?: number
+    temporaryProxyIdForPickingUp?: number
   ): any;
 
   private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
@@ -846,14 +859,14 @@ export class WorkerHandler<A extends CommonActions> {
     let promiseRevoke: (() => void) | null = null;
 
     let parentProperty: keyof any | (keyof any)[] | null = null;
-    let temporaryProxyId: number | null = null;
+    let temporaryProxyIdForPickingUp: number | null = null;
 
     if (proxyType === "Worker Proxy") {
       isTargetArray = p2;
     } else {
       const carriedPromise: Promise<any> = p1;
       parentProperty = p2;
-      temporaryProxyId = p3 || null;
+      temporaryProxyIdForPickingUp = p3 || null;
 
       //#endregion
 
@@ -936,8 +949,10 @@ export class WorkerHandler<A extends CommonActions> {
           proxyTargetId,
           property: propertyValue,
           getterId: _this.currentProxyGetterId++,
-          temporaryProxyIdForDepositing: temporaryProxyId, // 对于 Carrier Proxy 的 get 操作，如果它的创建链上出现过 temporaryProxyId，那么需要将最近的一个 temporaryProxyId 继续传递下去
-          temporaryProxyIdForPickingUp: temporaryProxyId,
+          temporaryProxyIdForDepositing: temporaryProxyIdForPickingUp
+            ? _this.currentTemporaryProxyId++
+            : null, // 对于 Carrier Proxy 的 get 操作，如果它的创建链上出现过 temporaryProxyId，那么需要再创建一个 temporaryProxyId
+          temporaryProxyIdForPickingUp,
         });
       },
 
@@ -975,7 +990,7 @@ export class WorkerHandler<A extends CommonActions> {
               property: propertyValue,
               value: null,
               valueProxyContext,
-              temporaryProxyIdForPickingUp: temporaryProxyId,
+              temporaryProxyIdForPickingUp,
             });
           } else return false;
         }
@@ -986,7 +1001,7 @@ export class WorkerHandler<A extends CommonActions> {
           proxyTargetId,
           property: propertyValue,
           value,
-          temporaryProxyIdForPickingUp: temporaryProxyId,
+          temporaryProxyIdForPickingUp,
         });
       },
 
@@ -1014,7 +1029,7 @@ export class WorkerHandler<A extends CommonActions> {
             _this.utilsForProxy.reduceProxyContext(_thisProxyContext),
           thisArg: _thisProxyContext ? undefined : thisArg,
           temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
-          temporaryProxyIdForPickingUp: temporaryProxyId,
+          temporaryProxyIdForPickingUp,
         });
       },
 
@@ -1036,7 +1051,7 @@ export class WorkerHandler<A extends CommonActions> {
           argumentsList,
           argProxyContexts,
           temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
-          temporaryProxyIdForPickingUp: temporaryProxyId,
+          temporaryProxyIdForPickingUp,
         });
       },
     };
@@ -1217,6 +1232,7 @@ export class WorkerHandler<A extends CommonActions> {
       associatedProxies,
       isRevoked: false,
       isArray: isTargetArray,
+      temporaryProxyIdForPickingUp,
     });
 
     if (promiseProxy && promiseRevoke) {
@@ -1227,6 +1243,7 @@ export class WorkerHandler<A extends CommonActions> {
         associatedProxies,
         isRevoked: false,
         isArray: isTargetArray,
+        temporaryProxyIdForPickingUp,
       });
     }
 
@@ -1238,6 +1255,7 @@ export class WorkerHandler<A extends CommonActions> {
         associatedProxies,
         isRevoked: false,
         isArray: true,
+        temporaryProxyIdForPickingUp,
       });
 
     //#endregion
@@ -1300,6 +1318,7 @@ export class WorkerHandler<A extends CommonActions> {
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
       proxyTargetId: proxyContext.proxyTargetId,
+      temporaryProxyIdForPickingUp: proxyContext.temporaryProxyIdForPickingUp,
     };
     this.worker.postMessage(revokeProxyMsg);
   }

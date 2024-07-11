@@ -287,6 +287,9 @@ function postProxyData(
  * @returns target
  */
 function getTargetByProxyContext(proxyContext: ProxyContext) {
+  if (proxyContext.temporaryProxyIdForPickingUp) {
+    return depositingDatas[proxyContext.temporaryProxyIdForPickingUp];
+  }
   // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
   const proxyTargetTreeNode = getProxyTargetTreeNode(
     proxyContext.proxyTargetId
@@ -425,7 +428,6 @@ export function createOnmessage<A extends CommonActions>(
         let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
         if (temporaryProxyIdForPickingUp) {
           target = depositingDatas[temporaryProxyIdForPickingUp];
-          delete depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -460,7 +462,6 @@ export function createOnmessage<A extends CommonActions>(
         let target: any;
         if (temporaryProxyIdForPickingUp) {
           target = depositingDatas[temporaryProxyIdForPickingUp];
-          depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -513,11 +514,9 @@ export function createOnmessage<A extends CommonActions>(
         });
         //#endregion
 
-        // let target: any;
         let fn: (...args: any) => any;
         if (temporaryProxyIdForPickingUp) {
           fn = depositingDatas[temporaryProxyIdForPickingUp];
-          depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
@@ -551,11 +550,9 @@ export function createOnmessage<A extends CommonActions>(
           }
         });
 
-        // let target: any;
         let constructor: new (...args: any[]) => any;
         if (temporaryProxyIdForPickingUp) {
           constructor = depositingDatas[temporaryProxyIdForPickingUp];
-          depositingDatas[temporaryProxyIdForPickingUp];
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
