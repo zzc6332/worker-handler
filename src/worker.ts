@@ -124,7 +124,8 @@ type ActionThis<
 let currentProxyTargetId = 1;
 
 // proxyTargetTreeNodes 数组中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
-const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | null)[] = [];
+const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | undefined)[] =
+  [];
 
 // depositedDatas 数组中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
 const depositedDatas: any[] = [];
@@ -208,7 +209,7 @@ function postActionMessage(
  */
 function getProxyTargetTreeNode(proxyTargetId: number) {
   const proxyTargetTreeNode = proxyTargetTreeNodes[proxyTargetId];
-  if (proxyTargetTreeNode === null) {
+  if (proxyTargetTreeNode === undefined) {
     throw new Error("Proxy has been revoked.");
   }
   return proxyTargetTreeNode;
@@ -588,12 +589,16 @@ export function createOnmessage<A extends CommonActions>(
       //#region - revoke_proxy
     } else if (type === "revoke_proxy") {
       // console.log("revoke 之前的 proxyTargetTreeNodes： ", [...proxyTargetTreeNodes]);
-      const e = ev as MessageEvent<MsgToWorker<"revoke_proxy">>;
-      const proxyTargetTreeNode = proxyTargetTreeNodes[e.data.proxyTargetId];
-      if (proxyTargetTreeNode === null) return;
+      const { data } = ev as MessageEvent<MsgToWorker<"revoke_proxy">>;
+      if (data.temporaryProxyIdForPickingUp !== null) {
+        delete depositedDatas[data.temporaryProxyIdForPickingUp];
+        // console.log("被 revoke 的 data:", depositedDatas[data.temporaryProxyIdForPickingUp]);
+      }
+      const proxyTargetTreeNode = proxyTargetTreeNodes[data.proxyTargetId];
+      if (proxyTargetTreeNode === undefined) return;
       for (const subTreeNode of proxyTargetTreeNode) {
         // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-        proxyTargetTreeNodes[subTreeNode.value.proxyTargetId] = null;
+        delete proxyTargetTreeNodes[subTreeNode.value.proxyTargetId];
       }
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
 

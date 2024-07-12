@@ -711,10 +711,13 @@ export class WorkerHandler<A extends CommonActions> {
     const temporaryProxyIdForPickingUp =
       handleProxyMsg.temporaryProxyIdForDepositing;
 
+    let parentProperty: keyof any | (keyof any)[] | null = null;
+    if (handleProxyMsg.trap === "get") parentProperty = handleProxyMsg.property;
+
     return this.createProxy(
       handleProxyMsg.proxyTargetId,
       promise,
-      (handleProxyMsg as any).property,
+      parentProperty,
       temporaryProxyIdForPickingUp || undefined
     );
   }
@@ -843,7 +846,7 @@ export class WorkerHandler<A extends CommonActions> {
   private createProxy(
     proxyTargetId: number,
     carriedPromise: Promise<any>,
-    parentProperty: keyof any | (keyof any)[],
+    parentProperty: keyof any | (keyof any)[] | null,
     temporaryProxyIdForPickingUp?: number
   ): any;
 
