@@ -599,12 +599,13 @@ export function createOnmessage<A extends CommonActions>(
       if (data.temporaryProxyIdForPickingUp !== null) {
         delete depositedDatas[data.temporaryProxyIdForPickingUp];
         // console.log("被 revoke 的 data:", depositedDatas[data.temporaryProxyIdForPickingUp]);
-      }
-      const proxyTargetTreeNode = proxyTargetTreeNodes[data.proxyTargetId];
-      if (proxyTargetTreeNode === undefined) return;
-      for (const subTreeNode of proxyTargetTreeNode) {
-        // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-        delete proxyTargetTreeNodes[subTreeNode.value.proxyTargetId];
+      } else {
+        const proxyTargetTreeNode = proxyTargetTreeNodes[data.proxyTargetId];
+        if (proxyTargetTreeNode === undefined) return;
+        for (const subTreeNode of proxyTargetTreeNode) {
+          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+          delete proxyTargetTreeNodes[subTreeNode.value.proxyTargetId];
+        }
       }
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
 
