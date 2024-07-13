@@ -21,7 +21,6 @@ export interface ProxyContext {
 
 interface ProxyContextX extends ProxyContext {
   revoke: () => void;
-  associatedProxies: Set<any>;
   isRevoked: boolean;
   isArray: boolean;
 }
@@ -345,9 +344,11 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#region - 私有方法和属性
 
+  //#region - 私有属性
+
   private worker: Worker;
 
-  private executionId = 0;
+  private currentExecutionId = 1;
 
   private listenerMapsSet: Set<ListenerMap> = new Set();
 
@@ -355,6 +356,20 @@ export class WorkerHandler<A extends CommonActions> {
     messageChannel: MessageChannel;
     readyState: ReadyState;
   }> = new Set();
+
+  // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
+  private currentProxyGetterId = 1;
+
+  // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
+  private proxyWeakMap = new WeakMap<any, ProxyContextX>();
+
+  // 当 Worker Proxy 通过 apply 操作或 construct 操作在 Worker 中产生了新的需要代理的数据，而无法及时在 Main 中获取其 proxyTargetId 时，使用这个临时的 temporaryProxyId 作为唯一标识符，每次调用 Worker Proxy 的 apply 或 construct 捕捉器时递增
+  private currentTemporaryProxyId = 1;
+
+  private registries: (FinalizationRegistry<any> | undefined)[] = [];
+  private currentRegistryId = 1;
+
+  //#endregion
 
   //#region - this.handleListeners ！！ 处理消息的核心
 
@@ -421,7 +436,7 @@ export class WorkerHandler<A extends CommonActions> {
       actionName,
       payloads: payloadsList,
       payloadProxyContexts,
-      executionId: this.executionId++,
+      executionId: this.currentExecutionId++,
     };
 
     try {
@@ -794,19 +809,6 @@ export class WorkerHandler<A extends CommonActions> {
 
   //#endregion
 
-  //#region - 私有属性
-
-  // proxy 拦截 get 操作时的唯一标识，用于匹配返回的 data，每次拦截时都会递增
-  private currentProxyGetterId = 1;
-
-  // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
-  private proxyWeakMap = new WeakMap<any, ProxyContextX>();
-
-  // 当 Worker Proxy 通过 apply 操作或 construct 操作在 Worker 中产生了新的需要代理的数据，而无法及时在 Main 中获取其 proxyTargetId 时，使用这个临时的 temporaryProxyId 作为唯一标识符，每次调用 Worker Proxy 的 apply 或 construct 捕捉器时递增
-  private currentTemporaryProxyId = 1;
-
-  //#endregion
-
   //#region - checkClonability
   /**
    * 检测一个数据是否可以被传输到 Worker 中，如果不能，则会抛出错误
@@ -859,7 +861,6 @@ export class WorkerHandler<A extends CommonActions> {
     let isTargetArray: boolean = false;
 
     let promiseProxy: any = null;
-    let promiseRevoke: (() => void) | null = null;
 
     let parentProperty: keyof any | (keyof any)[] | null = null;
     let temporaryProxyIdForPickingUp: number | null = null;
@@ -876,7 +877,7 @@ export class WorkerHandler<A extends CommonActions> {
       //#region - promiseProxy
 
       // 当创建的是 Carrier Proxy 时，需要再创建一个 promiseProxy 作为 dataProxy 的 target，使得通过 Carrier Proxy 进行的链式调用的结果是一个类 Promise 对象，可以 resolve 出一个 Worker Proxy 或结构化克隆后的数据
-      const { proxy, revoke } = Proxy.revocable(function () {}, {
+      const proxy = new Proxy(function () {}, {
         get(_, property) {
           if (property in carriedPromise) {
             const value = Reflect.get(carriedPromise, property);
@@ -898,12 +899,14 @@ export class WorkerHandler<A extends CommonActions> {
         },
       });
       promiseProxy = proxy;
-      promiseRevoke = revoke;
 
       //#endregion
     }
 
     //#region - dataProxy
+
+    let exposedProxy: any;
+    let exposedProxyRevoke: (() => void) | null = null;
 
     // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
     const dataProxyHandler: ProxyHandler<any> = {
@@ -1059,23 +1062,17 @@ export class WorkerHandler<A extends CommonActions> {
       },
     };
 
-    const { proxy: dataProxy, revoke: dataProxyRevoke } = Proxy.revocable(
-      promiseProxy || function () {},
-      dataProxyHandler
-    );
-
-    //#endregion
-
     //#region - arrayProxy
-
-    let arrayProxy: any[] | null = null;
-    let arrayProxyRevoke: (() => void) | null = null;
 
     // 当目标数据为 Array 时进行拓展处理
     if (isTargetArray) {
       // 在 Main 中创建一个数组
       const arr: any[] = [];
 
+      const dataProxy = new Proxy(
+        promiseProxy || function () {},
+        dataProxyHandler
+      );
       /**
        * 将 Worker 中的数组同步给 Main 中的数组
        */
@@ -1212,58 +1209,57 @@ export class WorkerHandler<A extends CommonActions> {
           }
         },
       };
-      const { proxy, revoke } = Proxy.revocable(arr, arrayProxyHandler);
 
-      arrayProxy = proxy;
-      arrayProxyRevoke = revoke;
+      const { proxy: arrayProxy, revoke: arrayProxyRevoke } = Proxy.revocable(
+        arr,
+        arrayProxyHandler
+      );
+
+      exposedProxy = arrayProxy;
+      exposedProxyRevoke = arrayProxyRevoke;
+
+      //#endregion
+    } else {
+      const { proxy: dataProxy, revoke: dataProxyRevoke } = Proxy.revocable(
+        promiseProxy || function () {},
+        dataProxyHandler
+      );
+
+      exposedProxy = dataProxy;
+      exposedProxyRevoke = dataProxyRevoke;
     }
 
     //#endregion
 
-    //#region - 关联 Proxy
+    //#region - 映射 Proxy 与 ProxyContext
 
-    // 将关联的 Proxy 放入 associatedProxies 集合中
-    const associatedProxies = new Set();
-    associatedProxies.add(dataProxy);
-    if (promiseProxy) associatedProxies.add(promiseProxy);
-    if (arrayProxy) associatedProxies.add(arrayProxy);
-
-    this.proxyWeakMap.set(dataProxy, {
+    this.proxyWeakMap.set(exposedProxy, {
       proxyTargetId,
       parentProperty,
-      revoke: dataProxyRevoke,
-      associatedProxies,
+      revoke: exposedProxyRevoke,
       isRevoked: false,
       isArray: isTargetArray,
       temporaryProxyIdForPickingUp,
     });
 
-    if (promiseProxy && promiseRevoke) {
-      this.proxyWeakMap.set(promiseProxy, {
-        proxyTargetId,
-        parentProperty,
-        revoke: promiseRevoke,
-        associatedProxies,
-        isRevoked: false,
-        isArray: isTargetArray,
-        temporaryProxyIdForPickingUp,
-      });
-    }
-
-    if (arrayProxy && arrayProxyRevoke)
-      this.proxyWeakMap.set(arrayProxy, {
-        proxyTargetId,
-        parentProperty,
-        revoke: arrayProxyRevoke,
-        associatedProxies,
-        isRevoked: false,
-        isArray: true,
-        temporaryProxyIdForPickingUp,
-      });
-
     //#endregion
 
-    return arrayProxy || dataProxy;
+    // 如果当前环境支持 FinalizationRegistry 时，则当数据被回收时进行处理
+    if (FinalizationRegistry) {
+      const registryId = _this.currentRegistryId;
+      const registry = new FinalizationRegistry(() => {
+        const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
+          type: "revoke_proxy",
+          proxyTargetId,
+          temporaryProxyIdForPickingUp,
+        };
+        this.worker.postMessage(revokeProxyMsg);
+        delete _this.registries[registryId];
+      });
+      registry.register(exposedProxy, null);
+      _this.registries[_this.currentRegistryId++] = registry;
+    }
+    return exposedProxy;
   }
 
   //#endregion
@@ -1312,11 +1308,6 @@ export class WorkerHandler<A extends CommonActions> {
     if (!proxyContext) return;
     if (!proxyContext.isRevoked) proxyContext.revoke();
     proxyContext.isRevoked = true;
-    proxyContext.associatedProxies.delete(proxy);
-
-    proxyContext.associatedProxies.forEach((associatedProxy, _, set) => {
-      if (set.has(associatedProxy)) this.revokeProxy(associatedProxy);
-    });
 
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",

@@ -130,6 +130,12 @@ const proxyTargetTreeNodes: (TreeNode<ProxyTargetTreeNodeValue> | undefined)[] =
 // depositedDatas 数组中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
 const depositedDatas: any[] = [];
 
+export const debugging = {
+  currentProxyTargetId,
+  proxyTargetTreeNodes,
+  depositedDatas,
+};
+
 //#region - postActionMessage
 
 /**
