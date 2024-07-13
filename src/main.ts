@@ -182,13 +182,8 @@ type ProxyData<D> = D extends new (...args: any[]) => infer Instance // Data 拥
 
 // 对应数据为对象的 Worker Proxy
 export type ProxyObj<D> = {
-  [K in keyof D]: D[K] extends (...args: any[]) => any // 对象中的值拥有调用签名的情况
-    ? ProxyData<D[K]>
-    : D[K] extends new (...args: any[]) => any // 对象中的值拥有构造签名的情况
-      ? ProxyData<D[K]>
-      : // 对象中的值排除上面条件后的情况
-        PromiseLike<ReceivedData<D[K]>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
-          ProxyData<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
+  [K in keyof D]: PromiseLike<ReceivedData<D[K]>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
+    ProxyData<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
 };
 
 type ArrWithoutIterator<T> = {
