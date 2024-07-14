@@ -22,7 +22,7 @@ export interface ProxyContext {
 interface ProxyContextX extends ProxyContext {
   revoke: () => void;
   isRevoked: boolean;
-  isArray: boolean;
+  proxyType: "Carrier Proxy" | "Worker Proxy" | "Worker Array Proxy";
 }
 
 type MsgToWorkerBasic<
@@ -1235,8 +1235,8 @@ export class WorkerHandler<A extends CommonActions> {
       parentProperty,
       revoke: exposedProxyRevoke,
       isRevoked: false,
-      isArray: isTargetArray,
       temporaryProxyIdForPickingUp,
+      proxyType: isTargetArray ? "Worker Array Proxy" : proxyType,
     });
 
     //#endregion
