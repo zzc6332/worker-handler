@@ -361,7 +361,9 @@ export class WorkerHandler<A extends CommonActions> {
   // 当 Worker Proxy 通过 apply 操作或 construct 操作在 Worker 中产生了新的需要代理的数据，而无法及时在 Main 中获取其 proxyTargetId 时，使用这个临时的 temporaryProxyId 作为唯一标识符，每次调用 Worker Proxy 的 apply 或 construct 捕捉器时递增
   private currentTemporaryProxyId = 1;
 
-  private registries: (FinalizationRegistry<any> | undefined)[] = [];
+  // registries 中存放用于清理数据的 FinalizationRegistry 实例
+  private registries: Map<number, FinalizationRegistry<any> | undefined> =
+    new Map();
   private currentRegistryId = 1;
 
   //#endregion
@@ -1249,10 +1251,10 @@ export class WorkerHandler<A extends CommonActions> {
           temporaryProxyIdForPickingUp,
         };
         this.worker.postMessage(revokeProxyMsg);
-        delete _this.registries[registryId];
+        _this.registries.delete(registryId);
       });
       registry.register(exposedProxy, null);
-      _this.registries[_this.currentRegistryId++] = registry;
+      _this.registries.set(_this.currentRegistryId++, registry);
     }
     return exposedProxy;
   }
