@@ -307,20 +307,32 @@ interface MessageSource<D, A extends CommonActions>
 
 type ReadyState = { current: 0 | 1 | 2 };
 
+interface WorkerHandlerOptions extends WorkerOptions {
+  autoCleanup?: boolean;
+}
+
 //#endregion
 
 //#region - WorkerHandler
 
 export class WorkerHandler<A extends CommonActions> {
-  constructor(workerSrc: string | URL | Worker, options?: WorkerOptions) {
-    const _options: WorkerOptions = {
-      ...options,
-      type: "module",
-    };
+  constructor(
+    workerSrc: string | URL | Worker,
+    options: WorkerHandlerOptions = {}
+  ) {
+    const workerOptions: WorkerOptions = { type: "module" };
+    Object.keys(options).forEach((key) => {
+      const k = key as keyof WorkerHandlerOptions;
+      if (k === "autoCleanup" || k === "type") return;
+      (workerOptions[k] as string | undefined) = options[k];
+    });
+    if (typeof options.autoCleanup === "boolean") {
+      this.autoCleanup = options.autoCleanup;
+    }
     if (workerSrc instanceof Worker) {
       this.worker = workerSrc;
     } else {
-      this.worker = new Worker(workerSrc, _options);
+      this.worker = new Worker(workerSrc, workerOptions);
     }
     const initialListenerMap = {
       message: (e: MessageEvent<MsgFromWorker>) => {
@@ -340,6 +352,8 @@ export class WorkerHandler<A extends CommonActions> {
   //#region - 私有方法和属性
 
   //#region - 私有属性
+
+  private autoCleanup: boolean = true;
 
   private worker: Worker;
 
@@ -1242,7 +1256,7 @@ export class WorkerHandler<A extends CommonActions> {
     //#endregion
 
     // 如果当前环境支持 FinalizationRegistry 时，则当数据被回收时进行处理
-    if (FinalizationRegistry) {
+    if (FinalizationRegistry && this.autoCleanup) {
       const registryId = _this.currentRegistryId;
       const registry = new FinalizationRegistry(() => {
         const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
