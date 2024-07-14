@@ -451,13 +451,13 @@ export function createOnmessage<A extends CommonActions>(
         if (temporaryProxyIdForPickingUp) {
           target = depositedDatas[temporaryProxyIdForPickingUp];
         } else {
-          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
         }
-        if (!Array.isArray(property)) {
-          data = target[property!];
-        } else {
+        if (Array.isArray(property)) {
           data = property.reduce((preV, cur) => preV[cur], target);
+        } else {
+          data = target[property!];
         }
 
         if (temporaryProxyIdForDepositing)
