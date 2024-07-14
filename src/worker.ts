@@ -130,7 +130,8 @@ const proxyTargetTreeNodes: Map<
 > = new Map();
 
 // depositedDatas 中存放对 Carrier Proxy 进行 apply 或 construct 操作而创建的临时数据
-const depositedDatas: Map<number, any> = new Map();
+const depositedDatas: Map<number, { data: any; proxyTargetId: number | null }> =
+  new Map();
 
 export const debugging = {
   currentProxyTargetId,
@@ -230,20 +231,24 @@ function getProxyTargetTreeNode(proxyTargetId: number) {
  * @param proxyTargetId
  * @param getterId
  * @param data
+ * @param temporaryProxyIdForDepositing
  * @param parentProxyTargetTreeNode
+ * @param adoptiveParentProxyTargetTreeNode
  * @returns
  */
 function postProxyData(
   proxyTargetId: number,
   getterId: number,
   data: any,
-  parentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue>
+  temporaryProxyIdForDepositing: number | null,
+  parentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue> | null,
+  adoptiveParentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue> | null
 ) {
   const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
     type: "proxy_data",
     proxyTargetId,
     data,
-    getterId: getterId!,
+    getterId,
   };
   const transfer = parentProxyTargetTreeNode
     ? parentProxyTargetTreeNode.value.transfer.filter((item) =>
@@ -275,9 +280,11 @@ function postProxyData(
       type: "create_subproxy",
       proxyTargetId: currentProxyTargetId,
       parentProxyTargetId: proxyTargetId,
-      getterId: getterId!,
+      getterId,
       isArray: Array.isArray(data),
     };
+    postMessage(createSubproxyMsg);
+
     const proxyTargetTreeNodeValue: ProxyTargetTreeNodeValue = {
       target: data,
       proxyTargetId: currentProxyTargetId,
@@ -285,10 +292,20 @@ function postProxyData(
     };
     const proxyTargetTreeNode = parentProxyTargetTreeNode
       ? parentProxyTargetTreeNode.addChild(proxyTargetTreeNodeValue)
-      : new TreeNode(proxyTargetTreeNodeValue);
+      : adoptiveParentProxyTargetTreeNode
+        ? adoptiveParentProxyTargetTreeNode.addAdoptedChild(
+            proxyTargetTreeNodeValue
+          )
+        : new TreeNode(proxyTargetTreeNodeValue);
     proxyTargetTreeNodes.set(currentProxyTargetId, proxyTargetTreeNode);
+
+    // 如果传入了有效的 temporaryProxyIdForDepositing，则为 depositedDatas 中对应的数据追加关联的 proxyTargetId
+    if (temporaryProxyIdForDepositing !== null) {
+      const depositedData = depositedDatas.get(temporaryProxyIdForDepositing);
+      if (depositedData) depositedData.proxyTargetId = currentProxyTargetId;
+    }
+
     currentProxyTargetId++;
-    postMessage(createSubproxyMsg);
   }
 }
 
@@ -299,7 +316,7 @@ function postProxyData(
  */
 function getTargetByProxyContext(proxyContext: ProxyContext) {
   if (proxyContext.temporaryProxyIdForPickingUp) {
-    return depositedDatas.get(proxyContext.temporaryProxyIdForPickingUp);
+    return depositedDatas.get(proxyContext.temporaryProxyIdForPickingUp)?.data;
   }
   // 根据 proxyContext 获取到 proxyId 对应的 rootProxyTarget
   const proxyTargetTreeNode = getProxyTargetTreeNode(
@@ -324,10 +341,15 @@ function getTargetByProxyContext(proxyContext: ProxyContext) {
  * @param data
  */
 function depositeData(temporaryProxyIdForDepositing: number, data: any) {
-  depositedDatas.set(temporaryProxyIdForDepositing, data);
+  depositedDatas.set(temporaryProxyIdForDepositing, {
+    data,
+    proxyTargetId: null, // proxyTargetId 先设置为 null，之后如果在 postProxyData() 中需要为 data 创建 proxy，则会追加设置对应的 proxyTargetId
+  });
+
   // 临时数据大多数情况下可以在下一个临时数据被存储时就删除，除了当临时数据是对象的情况下，有可能在调用其方法时会将其作为 this 引用，因此多保留一回合
   if (
-    typeof depositedDatas.get(temporaryProxyIdForDepositing - 1) !== "object"
+    typeof depositedDatas.get(temporaryProxyIdForDepositing - 1)?.data !==
+    "object"
   ) {
     depositedDatas.delete(temporaryProxyIdForDepositing - 1);
   }
@@ -455,7 +477,16 @@ export function createOnmessage<A extends CommonActions>(
         let target: any;
         let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
         if (temporaryProxyIdForPickingUp) {
-          target = depositedDatas.get(temporaryProxyIdForPickingUp);
+          const depositedData = depositedDatas.get(
+            temporaryProxyIdForPickingUp
+          );
+          target = depositedData?.data;
+          // 如果 depositedData 中关联了 proxyTargetId，那么也要取出相应的 proxyTargetTreeNode
+          if (depositedData?.proxyTargetId) {
+            proxyTargetTreeNode = getProxyTargetTreeNode(
+              depositedData?.proxyTargetId
+            );
+          }
         } else {
           proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -463,13 +494,19 @@ export function createOnmessage<A extends CommonActions>(
         if (Array.isArray(property)) {
           data = property.reduce((preV, cur) => preV[cur], target);
         } else {
-          data = target[property!];
+          data = target[property];
         }
 
         if (temporaryProxyIdForDepositing)
           depositeData(temporaryProxyIdForDepositing, data);
 
-        postProxyData(proxyTargetId, getterId, data, proxyTargetTreeNode);
+        postProxyData(
+          proxyTargetId,
+          getterId,
+          data,
+          temporaryProxyIdForDepositing,
+          proxyTargetTreeNode
+        );
 
         //#endregion
 
@@ -489,7 +526,7 @@ export function createOnmessage<A extends CommonActions>(
 
         let target: any;
         if (temporaryProxyIdForPickingUp) {
-          target = depositedDatas.get(temporaryProxyIdForPickingUp);
+          target = depositedDatas.get(temporaryProxyIdForPickingUp)?.data;
         } else {
           const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           target = proxyTargetTreeNode.value.target;
@@ -543,10 +580,20 @@ export function createOnmessage<A extends CommonActions>(
         //#endregion
 
         let fn: (...args: any) => any;
+        let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
         if (temporaryProxyIdForPickingUp) {
-          fn = depositedDatas.get(temporaryProxyIdForPickingUp);
+          const depositedData = depositedDatas.get(
+            temporaryProxyIdForPickingUp
+          );
+          fn = depositedData?.data;
+          // 如果 depositedData 中关联了 proxyTargetId，那么也要取出相应的 proxyTargetTreeNode
+          if (depositedData?.proxyTargetId) {
+            proxyTargetTreeNode = getProxyTargetTreeNode(
+              depositedData?.proxyTargetId
+            );
+          }
         } else {
-          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
           fn = parentProperty.reduce((prev, cur) => prev[cur], target);
         }
@@ -555,7 +602,14 @@ export function createOnmessage<A extends CommonActions>(
 
         depositeData(temporaryProxyIdForDepositing, result);
 
-        postProxyData(proxyTargetId, getterId, result);
+        postProxyData(
+          proxyTargetId,
+          getterId,
+          result,
+          temporaryProxyIdForDepositing,
+          null,
+          proxyTargetTreeNode
+        );
 
         //#endregion
 
@@ -579,10 +633,20 @@ export function createOnmessage<A extends CommonActions>(
         });
 
         let constructor: new (...args: any[]) => any;
+        let proxyTargetTreeNode: TreeNode<ProxyTargetTreeNodeValue> | undefined;
         if (temporaryProxyIdForPickingUp) {
-          constructor = depositedDatas.get(temporaryProxyIdForPickingUp);
+          const depositedData = depositedDatas.get(
+            temporaryProxyIdForPickingUp
+          );
+          constructor = depositedData?.data;
+          // 如果 depositedData 中关联了 proxyTargetId，那么也要取出相应的 proxyTargetTreeNode
+          if (depositedData?.proxyTargetId) {
+            proxyTargetTreeNode = getProxyTargetTreeNode(
+              depositedData?.proxyTargetId
+            );
+          }
         } else {
-          const proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
+          proxyTargetTreeNode = getProxyTargetTreeNode(proxyTargetId);
           const target = proxyTargetTreeNode.value.target;
           constructor = parentProperty.reduce((prev, cur) => prev[cur], target);
         }
@@ -591,7 +655,14 @@ export function createOnmessage<A extends CommonActions>(
 
         depositeData(temporaryProxyIdForDepositing, instance);
 
-        postProxyData(proxyTargetId, getterId, instance);
+        postProxyData(
+          proxyTargetId,
+          getterId,
+          instance,
+          temporaryProxyIdForDepositing,
+          null,
+          proxyTargetTreeNode
+        );
 
         //#endregion
       }
@@ -610,9 +681,16 @@ export function createOnmessage<A extends CommonActions>(
           data.proxyTargetId
         );
         if (proxyTargetTreeNode === undefined) return;
-        for (const subTreeNode of proxyTargetTreeNode) {
-          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+        if (ev.data.derived) {
+          for (const subTreeNode of proxyTargetTreeNode.allChildren()) {
+            // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+            proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+          }
+        } else {
+          for (const subTreeNode of proxyTargetTreeNode) {
+            // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+            proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+          }
         }
       }
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);

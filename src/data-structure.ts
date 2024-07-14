@@ -3,29 +3,73 @@ export class TreeNode<T> {
 
   parent: TreeNode<T> | null = null;
 
+  adoptedChildren: LinkedList<TreeNode<T>> = new LinkedList();
+
+  adoptiveParent: TreeNode<T> | null = null;
+
   constructor(public value: T) {}
 
-  addChild(value: T) {
+  private addChildGenerally(value: T, isAdoptedChild: boolean = false) {
     const childNode = new TreeNode(value);
-    this.children.push(childNode);
-    childNode.parent = this;
+    if (isAdoptedChild) {
+      this.adoptedChildren.push(childNode);
+      childNode.adoptiveParent = this;
+    } else {
+      this.children.push(childNode);
+      childNode.parent = this;
+    }
     return childNode;
   }
 
-  addChildren(values: T[]) {
+  addChild(value: T) {
+    return this.addChildGenerally(value);
+  }
+
+  addAdoptedChild(value: T) {
+    return this.addChildGenerally(value, true);
+  }
+
+  private addChildrenGenerally(values: T[], isAdoptedChild: boolean = false) {
     const childNodes: TreeNode<T>[] = [];
     values.forEach((value) => {
-      childNodes.push(this.addChild(value));
+      childNodes.push(this.addChildGenerally(value, isAdoptedChild));
     });
     return childNodes;
   }
 
-  removeChild(removedChildValue: T) {
-    for (const childNode of this.children) {
-      if (childNode.value.value === removedChildValue) {
-        return this.children.remove(childNode.value);
+  addChildren(values: T[]) {
+    return this.addChildrenGenerally(values);
+  }
+
+  addAdoptedChildren(values: T[]) {
+    return this.addChildrenGenerally(values, true);
+  }
+
+  private removeChildGenerally(
+    removedChildValue: T,
+    isAdoptedChild: boolean = false
+  ) {
+    if (isAdoptedChild) {
+      for (const childNode of this.adoptedChildren) {
+        if (childNode.value.value === removedChildValue) {
+          return this.adoptedChildren.remove(childNode.value);
+        }
+      }
+    } else {
+      for (const childNode of this.children) {
+        if (childNode.value.value === removedChildValue) {
+          return this.children.remove(childNode.value);
+        }
       }
     }
+  }
+
+  removeChild(removedChildValue: T) {
+    return this.removeChildGenerally(removedChildValue);
+  }
+
+  removeAdoptedChild(removedChildValue: T) {
+    return this.removeChildGenerally(removedChildValue, true);
   }
 
   get root() {
@@ -34,13 +78,18 @@ export class TreeNode<T> {
     return getRootValue(this);
   }
 
-  [Symbol.iterator]() {
+  private getIteratorOfChildrenGenerally(all: boolean = false) {
     const listQueue = new LinkedList<TreeNode<T>>();
 
     function queue(treeNode: TreeNode<T>) {
       listQueue.push(treeNode);
       for (const listNode of treeNode.children) {
         queue(listNode.value);
+      }
+      if (all) {
+        for (const listNode of treeNode.adoptedChildren) {
+          queue(listNode.value);
+        }
       }
     }
 
@@ -57,6 +106,21 @@ export class TreeNode<T> {
         };
       },
     };
+  }
+
+  // 生成一个可以用来递归迭代所有 children 以及 adoptedChildren 的对象
+  allChildren() {
+    const _this = this;
+    return {
+      [Symbol.iterator]() {
+        return _this.getIteratorOfChildrenGenerally(true);
+      },
+    };
+  }
+
+  //  [Symbol.iterator] 生成的迭代器只会迭代所有的 children
+  [Symbol.iterator]() {
+    return this.getIteratorOfChildrenGenerally();
   }
 }
 

@@ -51,6 +51,7 @@ type MsgToWorkerBasic<
   cloneableItemsInArr: any[];
   temporaryProxyIdForDepositing: number;
   temporaryProxyIdForPickingUp: number | null;
+  derived: boolean;
 };
 
 export type MsgToWorker<
@@ -121,7 +122,7 @@ export type MsgToWorker<
     : T extends "revoke_proxy"
       ? Pick<
           MsgToWorkerBasic<T>,
-          "type" | "proxyTargetId" | "temporaryProxyIdForPickingUp"
+          "type" | "proxyTargetId" | "temporaryProxyIdForPickingUp" | "derived"
         >
       : T extends "update_array"
         ? Pick<
@@ -1263,6 +1264,7 @@ export class WorkerHandler<A extends CommonActions> {
           type: "revoke_proxy",
           proxyTargetId,
           temporaryProxyIdForPickingUp,
+          derived: false,
         };
         this.worker.postMessage(revokeProxyMsg);
         _this.registries.delete(registryId);
@@ -1314,16 +1316,19 @@ export class WorkerHandler<A extends CommonActions> {
    * 废除 proxy，并清理 Worker 中对应的数据
    * @param proxy
    */
-  revokeProxy(proxy: any) {
+  revokeProxy(proxy: any, options?: { derived?: boolean }) {
     const proxyContext = this.proxyWeakMap.get(proxy);
     if (!proxyContext) return;
     if (!proxyContext.isRevoked) proxyContext.revoke();
     proxyContext.isRevoked = true;
 
+    const derived = Boolean(options?.derived);
+
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
       proxyTargetId: proxyContext.proxyTargetId,
       temporaryProxyIdForPickingUp: proxyContext.temporaryProxyIdForPickingUp,
+      derived,
     };
     this.worker.postMessage(revokeProxyMsg);
   }
