@@ -159,8 +159,8 @@ type ExtendedMsgData<A extends CommonActions, D> = {
 };
 
 // 将 Worker 中的 Action 传递的数据的类型 D 转换成 Main 中接收到的数据的类型（如果 D 无法被结构化克隆，则 ReceivedData 会是 Proxy 类型）
-type ReceivedData<D> =
-  D extends StructuredCloneable<Transferable> ? D : ProxyData<D>;
+export type ReceivedData<D> =
+  D extends StructuredCloneable<Transferable> ? D : WorkerProxy<D>;
 
 //#endregion
 
@@ -180,6 +180,12 @@ type ProxyData<D> = D extends new (...args: any[]) => infer Instance // Data 拥
         ? ProxyArr<I>
         : ProxyObj<D>
       : PromiseLike<D>;
+
+export const revokeSymbol: unique symbol = Symbol.for("revoke");
+
+type WorkerProxy<D> = ProxyData<D> & {
+  [revokeSymbol]: (options?: { derived?: boolean } | boolean | 0 | 1) => void;
+};
 
 // 对应数据为对象的 Worker Proxy
 export type ProxyObj<D> = {
@@ -922,7 +928,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
     const dataProxyHandler: ProxyHandler<any> = {
-      get(_target, property) {
+      get(_target, property, receiver) {
         if (proxyType === "Carrier Proxy") {
           // 当前创建的是 Carrier Proxy 时，dataProxy 的 target 是 promiseProxy，需要代理对它的 get 操作
           if (property in _target) {
@@ -943,8 +949,15 @@ export class WorkerHandler<A extends CommonActions> {
             return;
         }
 
-        // symbol 类型的数据无法被传送到 Worker 中
-        if (typeof property === "symbol") return;
+        // symbol 类型的数据无法被传送到 Worker 中，只保留一些特定的 symbol 键用来做一些特殊处理
+        if (typeof property === "symbol") {
+          if (property === Symbol.for("revoke")) {
+            return (options?: { derived?: boolean } | boolean | 0 | 1) => {
+              _this.revokeProxy(receiver, options);
+            };
+          }
+          return;
+        }
 
         let propertyValue: keyof any | (keyof any)[];
 
@@ -1184,20 +1197,26 @@ export class WorkerHandler<A extends CommonActions> {
       }
 
       const arrayProxyHandler: ProxyHandler<Array<any>> = {
-        get(arr, property) {
+        get(arr, property, receiver) {
           if (
             property === "then" ||
             property === "catch" ||
-            property === "finally" ||
-            typeof property === "symbol"
+            property === "finally"
           ) {
-            if (property === Symbol.asyncIterator)
+            return;
+          } else if (typeof property === "symbol") {
+            if (property === Symbol.asyncIterator) {
               return async function* () {
                 await drawArr();
                 for (const item of arr) {
                   yield await item;
                 }
               };
+            } else if (property === Symbol.for("revoke")) {
+              return (options?: { derived?: boolean } | boolean | 0 | 1) => {
+                _this.revokeProxy(receiver, options);
+              };
+            }
             return;
           } else if (isArrayMethodProperty(property)) {
             return getWrappedArrMethod(property);
@@ -1316,13 +1335,18 @@ export class WorkerHandler<A extends CommonActions> {
    * 废除 proxy，并清理 Worker 中对应的数据
    * @param proxy
    */
-  revokeProxy(proxy: any, options?: { derived?: boolean }) {
+  revokeProxy(
+    proxy: WorkerProxy<any>,
+    options?: { derived?: boolean } | boolean | 0 | 1
+  ) {
     const proxyContext = this.proxyWeakMap.get(proxy);
     if (!proxyContext) return;
     if (!proxyContext.isRevoked) proxyContext.revoke();
     proxyContext.isRevoked = true;
 
-    const derived = Boolean(options?.derived);
+    const derived = Boolean(
+      typeof options === "object" ? options.derived : options
+    );
 
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
