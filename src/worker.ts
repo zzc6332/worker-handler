@@ -673,26 +673,21 @@ export function createOnmessage<A extends CommonActions>(
     } else if (type === "revoke_proxy") {
       // console.log("revoke 之前的 proxyTargetTreeNodes： ", [...proxyTargetTreeNodes]);
       const { data } = ev as MessageEvent<MsgToWorker<"revoke_proxy">>;
-      if (data.temporaryProxyIdForPickingUp !== null) {
-        depositedDatas.delete(data.temporaryProxyIdForPickingUp);
-        // console.log("被 revoke 的 data:", depositedDatas[data.temporaryProxyIdForPickingUp]);
+
+      const proxyTargetTreeNode = proxyTargetTreeNodes.get(data.proxyTargetId);
+      if (proxyTargetTreeNode === undefined) return;
+      if (ev.data.derived) {
+        for (const subTreeNode of proxyTargetTreeNode.allChildren()) {
+          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+        }
       } else {
-        const proxyTargetTreeNode = proxyTargetTreeNodes.get(
-          data.proxyTargetId
-        );
-        if (proxyTargetTreeNode === undefined) return;
-        if (ev.data.derived) {
-          for (const subTreeNode of proxyTargetTreeNode.allChildren()) {
-            // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-            proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
-          }
-        } else {
-          for (const subTreeNode of proxyTargetTreeNode) {
-            // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-            proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
-          }
+        for (const subTreeNode of proxyTargetTreeNode) {
+          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
         }
       }
+
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
 
       //#endregion

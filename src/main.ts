@@ -120,10 +120,7 @@ export type MsgToWorker<
               >
             : never
     : T extends "revoke_proxy"
-      ? Pick<
-          MsgToWorkerBasic<T>,
-          "type" | "proxyTargetId" | "temporaryProxyIdForPickingUp" | "derived"
-        >
+      ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId" | "derived">
       : T extends "update_array"
         ? Pick<
             MsgToWorkerBasic<T>,
@@ -1275,14 +1272,18 @@ export class WorkerHandler<A extends CommonActions> {
 
     //#endregion
 
-    // 如果当前环境支持 FinalizationRegistry 时，则当数据被回收时进行处理
-    if (FinalizationRegistry && this.autoCleanup) {
+    // 如果当前环境支持 FinalizationRegistry 且开启了 autoCleanup 时，则当 Worker Proxy 被回收时进行处理
+    if (
+      FinalizationRegistry &&
+      this.autoCleanup &&
+      proxyType === "Worker Proxy" // 当创建的 Proxy 是 Carrier Proxy 时，此时对应的 proxyTargetId 已经关联到了 Worker Proxy 中，因此不需要通过 Carrier Proxy 进行数据回收，只要处理 Worker Proxy 就好
+    ) {
+      // 先保存当前 _this.currentRegistryId 的值，用于在创建 FinalizationRegistry 的回调函数中使用
       const registryId = _this.currentRegistryId;
       const registry = new FinalizationRegistry(() => {
         const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
           type: "revoke_proxy",
           proxyTargetId,
-          temporaryProxyIdForPickingUp,
           derived: false,
         };
         this.worker.postMessage(revokeProxyMsg);
@@ -1351,7 +1352,6 @@ export class WorkerHandler<A extends CommonActions> {
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
       proxyTargetId: proxyContext.proxyTargetId,
-      temporaryProxyIdForPickingUp: proxyContext.temporaryProxyIdForPickingUp,
       derived,
     };
     this.worker.postMessage(revokeProxyMsg);
