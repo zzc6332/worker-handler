@@ -164,27 +164,39 @@ type ExtendedMsgData<A extends CommonActions, D> = {
 export type ReceivedData<D> =
   D extends StructuredCloneable<Transferable> ? D : WorkerProxy<D>;
 
+// 将一个类型中的每一项的类型包装一层 ReceivedData
+type WrapItemsWithReceivedData<T> = {
+  [K in keyof T]: ReceivedData<T[K]>;
+};
+
 //#endregion
 
 //#region - Proxy 相关
 
 // 将任意类型的数据转换为 Proxy 的形式，D 表示要被转换的数据，T 代表 root，即最外层的根 Proxy，其中递归调用的 ProxyData 的 T 都为 false
-type ProxyData<D> = D extends new (...args: any[]) => infer Instance // Data 拥有构造签名的情况
+type ProxyData<D, IsCarrier extends boolean = false> = D extends new (
+  ...args: any[]
+) => infer Instance // Data 拥有构造签名的情况
   ? new (
-      ...args: ConstructorParameters<D>
-    ) => PromiseLike<ReceivedData<Instance>> & ProxyDataWithSymbolKeys<Instance>
+      ...args: WrapItemsWithReceivedData<ConstructorParameters<D>>
+    ) => CarrierProxy<Instance>
   : D extends (...args: any[]) => infer Result // Data 拥有调用签名的情况
     ? (
-        ...args: Parameters<D>
-      ) => PromiseLike<ReceivedData<Result>> & ProxyDataWithSymbolKeys<Result>
+        ...args: WrapItemsWithReceivedData<Parameters<D>>
+      ) => CarrierProxy<Result>
     : D extends object // 排除上面条件后， Data 是引用数据类型的情况
       ? D extends Array<infer I>
-        ? ProxyArr<I>
+        ? IsCarrier extends true
+          ? ProxyObj<D, true, I> // 对于 Carrier Proxy 来说，不会是 Worker Array Proxy，使用 ProxyObj<D, true, I> 来表示非 Worker Array Proxy 的但引用的是数组的 Proxy 的行为
+          : ProxyArr<I> // 只有 Worker Proxy 才可能是 Worker Array Proxy，用 ProxyArr 来表示 Worker Array Proxy 的行为
         : ProxyObj<D>
-      : PromiseLike<D>;
+      : PromiseLike<D>; // Data 是基本数据类型的情况
 
 // 为 ProxyData 附加一些 symbol 键名
-type ProxyDataWithSymbolKeys<D> = ProxyData<D> & {
+type ProxyDataWithSymbolKeys<D, IsCarrier extends boolean = false> = ProxyData<
+  D,
+  IsCarrier
+> & {
   [proxyTypeSymbol]: "Worker Proxy" | "Worker Array Proxy" | "Carrier Proxy";
 };
 
@@ -193,10 +205,14 @@ export type WorkerProxy<D> = ProxyDataWithSymbolKeys<D> & {
   [revokeSymbol]: (options?: { derived?: boolean } | boolean | 0 | 1) => void;
 };
 
+type CarrierProxy<D> = PromiseLike<ReceivedData<D>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
+  ProxyDataWithSymbolKeys<D, true>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
+
 // 对应数据为对象的 Worker Proxy
-type ProxyObj<D> = {
-  [K in keyof D]: PromiseLike<ReceivedData<D[K]>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
-    ProxyDataWithSymbolKeys<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
+type ProxyObj<D, IsArray extends boolean = false, I = never> = {
+  [K in IsArray extends true ? keyof Array<I> : keyof D]: CarrierProxy<
+    IsArray extends true ? Array<I>[K & keyof Array<I>] : D[K & keyof D]
+  >;
 };
 
 type ArrWithoutIterator<T> = {
@@ -903,7 +919,7 @@ export class WorkerHandler<A extends CommonActions> {
 
       //#region - promiseProxy
 
-      // 当创建的是 Carrier Proxy 时，需要再创建一个 promiseProxy 作为 dataProxy 的 target，使得通过 Carrier Proxy 进行的链式调用的结果是一个类 Promise 对象，可以 resolve 出一个 Worker Proxy 或结构化克隆后的数据
+      // 当创建的是 Carrier Proxy 时，需要再创建一个 promiseProxy 作为 dataProxy 的 target，使得通过 Carrier Proxy 进行的链式操作的结果是一个类 Promise 对象，可以 resolve 出一个 Worker Proxy 或结构化克隆后的数据
       const proxy = new Proxy(function () {}, {
         get(_, property) {
           if (property in carriedPromise) {
