@@ -190,7 +190,9 @@ type ProxyData<D, IsCarrier extends boolean = false> = D extends new (
           ? ProxyObj<D, true, I> // 对于 Carrier Proxy 来说，不会是 Worker Array Proxy，使用 ProxyObj<D, true, I> 来表示非 Worker Array Proxy 的但引用的是数组的 Proxy 的行为
           : ProxyArr<I> // 只有 Worker Proxy 才可能是 Worker Array Proxy，用 ProxyArr 来表示 Worker Array Proxy 的行为
         : ProxyObj<D>
-      : PromiseLike<D>; // Data 是基本数据类型的情况
+      : D extends symbol // Data 是 symbol 类型的情况，此时是永远无法取出该 symbol 值的，只能获得一个没有意义的 Worker Proxy
+        ? PromiseLike<WorkerProxy<unknown>>
+        : PromiseLike<D>; // Data 是可结构化克隆的基本数据类型的情况
 
 // 为 ProxyData 附加一些 symbol 键名
 type ProxyDataWithSymbolKeys<D, IsCarrier extends boolean = false> = ProxyData<
