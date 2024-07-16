@@ -2,6 +2,11 @@ import { CommonActions, MsgFromWorker, GetDataType } from "./worker.js";
 
 import { getTransfers, StructuredCloneable } from "./type-judge";
 
+//#region - symbols
+export const revokeSymbol: unique symbol = Symbol();
+export const proxyTypeSymbol: unique symbol = Symbol();
+//#endregion
+
 //#region - types
 
 //#region - message 相关
@@ -167,27 +172,31 @@ export type ReceivedData<D> =
 type ProxyData<D> = D extends new (...args: any[]) => infer Instance // Data 拥有构造签名的情况
   ? new (
       ...args: ConstructorParameters<D>
-    ) => PromiseLike<ReceivedData<Instance>> & ProxyData<Instance>
+    ) => PromiseLike<ReceivedData<Instance>> & ProxyDataWithSymbolKeys<Instance>
   : D extends (...args: any[]) => infer Result // Data 拥有调用签名的情况
     ? (
         ...args: Parameters<D>
-      ) => PromiseLike<ReceivedData<Result>> & ProxyData<Result>
+      ) => PromiseLike<ReceivedData<Result>> & ProxyDataWithSymbolKeys<Result>
     : D extends object // 排除上面条件后， Data 是引用数据类型的情况
       ? D extends Array<infer I>
         ? ProxyArr<I>
         : ProxyObj<D>
       : PromiseLike<D>;
 
-export const revokeSymbol: unique symbol = Symbol.for("revoke");
+// 为 ProxyData 附加一些 symbol 键名
+type ProxyDataWithSymbolKeys<D> = ProxyData<D> & {
+  [proxyTypeSymbol]: "Worker Proxy" | "Worker Array Proxy" | "Carrier Proxy";
+};
 
-type WorkerProxy<D> = ProxyData<D> & {
+// WorkerProxy 独有的 revokeSymbol 键名
+export type WorkerProxy<D> = ProxyDataWithSymbolKeys<D> & {
   [revokeSymbol]: (options?: { derived?: boolean } | boolean | 0 | 1) => void;
 };
 
 // 对应数据为对象的 Worker Proxy
-export type ProxyObj<D> = {
+type ProxyObj<D> = {
   [K in keyof D]: PromiseLike<ReceivedData<D[K]>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
-    ProxyData<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
+    ProxyDataWithSymbolKeys<D[K]>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
 };
 
 type ArrWithoutIterator<T> = {
@@ -202,7 +211,9 @@ type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
     ? <U>(
         callbackfn: (
           ...cbArgs: {
-            [K in keyof CbArgs]: CbArgs[K] extends T ? ProxyObj<T> : CbArgs[K];
+            [K in keyof CbArgs]: CbArgs[K] extends T
+              ? WorkerProxy<T>
+              : CbArgs[K];
           }
         ) => U,
         ...rest: Rest
@@ -216,27 +227,26 @@ type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
               ? (
                   ...cbArgs: {
                     [K in keyof CbArgs]: CbArgs[K] extends T
-                      ? ProxyObj<T>
+                      ? WorkerProxy<T>
                       : CbArgs[K];
                   }
                 ) => CbResult
               : Args[K] extends T
-                ? ProxyObj<T>
+                ? WorkerProxy<T>
                 : Args[K] extends T[]
-                  ? ProxyObj<T[]>
+                  ? WorkerProxy<T[]>
                   : Args[K];
           }
         ) => PromiseLike<
           Result extends T
-            ? ProxyObj<T>
+            ? WorkerProxy<T>
             : Result extends T[]
-              ? ProxyObj<T>[]
+              ? WorkerProxy<T>[]
               : Result
         >
       : A[P]; // 不是数组方法的情况
 };
 
-// 对应数据为数组的 Worker Proxy
 interface ArrWithAsyncIterator<T>
   extends Omit<ArrWithRewrittenMethods<T>, "length"> {
   [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
@@ -253,6 +263,7 @@ type MergeProxyArr<A, O> = {
       : never;
 };
 
+// 对应数据为数组的 Worker Proxy
 type ProxyArr<I> = MergeProxyArr<ArrWithAsyncIterator<I>, ProxyObj<I[]>>;
 
 type ParametersOfAction<T extends ((...args: any) => any)[]> = {
@@ -870,7 +881,7 @@ export class WorkerHandler<A extends CommonActions> {
   private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
     const _this = this;
     //#region - 整理重载参数
-    const proxyType: "Worker Proxy" | "Carrier Proxy" =
+    let proxyType: "Worker Proxy" | "Worker Array Proxy" | "Carrier Proxy" =
       typeof p1 === "string" ? "Worker Proxy" : "Carrier Proxy";
 
     let isTargetArray: boolean = false;
@@ -882,6 +893,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     if (proxyType === "Worker Proxy") {
       isTargetArray = p2;
+      if (isTargetArray) proxyType = "Worker Array Proxy";
     } else {
       const carriedPromise: Promise<any> = p1;
       parentProperty = p2;
@@ -948,10 +960,12 @@ export class WorkerHandler<A extends CommonActions> {
 
         // symbol 类型的数据无法被传送到 Worker 中，只保留一些特定的 symbol 键用来做一些特殊处理
         if (typeof property === "symbol") {
-          if (property === Symbol.for("revoke")) {
+          if (property === revokeSymbol) {
             return (options?: { derived?: boolean } | boolean | 0 | 1) => {
               _this.revokeProxy(receiver, options);
             };
+          } else if (property === proxyTypeSymbol) {
+            return proxyType;
           }
           return;
         }
@@ -1209,10 +1223,12 @@ export class WorkerHandler<A extends CommonActions> {
                   yield await item;
                 }
               };
-            } else if (property === Symbol.for("revoke")) {
+            } else if (property === revokeSymbol) {
               return (options?: { derived?: boolean } | boolean | 0 | 1) => {
                 _this.revokeProxy(receiver, options);
               };
+            } else if (property === proxyTypeSymbol) {
+              return proxyType;
             }
             return;
           } else if (isArrayMethodProperty(property)) {
@@ -1267,7 +1283,7 @@ export class WorkerHandler<A extends CommonActions> {
       revoke: exposedProxyRevoke,
       isRevoked: false,
       temporaryProxyIdForPickingUp,
-      proxyType: isTargetArray ? "Worker Array Proxy" : proxyType,
+      proxyType,
     });
 
     //#endregion
