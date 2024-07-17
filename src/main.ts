@@ -27,7 +27,7 @@ export interface ProxyContext {
 interface ProxyContextX extends ProxyContext {
   revoke: () => void;
   isRevoked: boolean;
-  proxyType: "Carrier Proxy" | "Worker Proxy" | "Worker Array Proxy";
+  proxyType: ProxyType;
 }
 
 type MsgToWorkerBasic<
@@ -199,10 +199,10 @@ type ProxyDataWithSymbolKeys<D, IsCarrier extends boolean = false> = ProxyData<
   D,
   IsCarrier
 > & {
-  [proxyTypeSymbol]: "Worker Proxy" | "Worker Array Proxy" | "Carrier Proxy";
+  [proxyTypeSymbol]: ProxyType;
 };
 
-// WorkerProxy 独有的 revokeSymbol 键名
+// 只有 WorkerProxy 有 revokeSymbol 键
 export type WorkerProxy<D> = ProxyDataWithSymbolKeys<D> & {
   [revokeSymbol]: (options?: { derived?: boolean } | boolean | 0 | 1) => void;
 };
@@ -297,6 +297,8 @@ type AdaptedAction<A extends CommonActions> = {
 
 export type UnwrapPromise<T extends Promise<any> | PromiseLike<any>> =
   T extends Promise<infer D> ? D : T extends PromiseLike<infer D> ? D : never;
+
+type ProxyType = "Carrier Proxy" | "Worker Proxy" | "Worker Array Proxy";
 
 //#endregion
 
@@ -899,7 +901,7 @@ export class WorkerHandler<A extends CommonActions> {
   private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
     const _this = this;
     //#region - 整理重载参数
-    let proxyType: "Worker Proxy" | "Worker Array Proxy" | "Carrier Proxy" =
+    let proxyType: ProxyType =
       typeof p1 === "string" ? "Worker Proxy" : "Carrier Proxy";
 
     let isTargetArray: boolean = false;
@@ -953,6 +955,31 @@ export class WorkerHandler<A extends CommonActions> {
     let exposedProxy: any;
     let exposedProxyRevoke: (() => void) | null = null;
 
+    // 返回当访问 Worker Proxy 相关对象的不同 symbol 键时需要返回的内容
+    function handleSymbolKeys(
+      key: symbol,
+      proxy: WorkerProxy<any> | CarrierProxy<any>,
+      proxyType: ProxyType
+    ) {
+      switch (key) {
+        case revokeSymbol: {
+          // Carrier Proxy 不需要被 revoke，首先是因为链式操作时不方便收集所有 Carrier Proxy 来进行 revoke 处理，其次因为 Carrier Proxy 引用的目标数据都可以通过其它方式去清理：用 targetProxyId 标记的数据可以通过 revoke 对应的 Worker Proxy 来清理，用 temporaryProxyId 标记的数据则会在到达一定周期后被自动清理
+          if (proxyType !== "Carrier Proxy") {
+            return (options?: { derived?: boolean } | boolean | 0 | 1) => {
+              _this.revokeProxy(proxy as WorkerProxy<any>, options);
+            };
+          } else {
+            return;
+          }
+        }
+        case proxyTypeSymbol: {
+          return proxyType;
+        }
+        default:
+          return;
+      }
+    }
+
     // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
     const dataProxyHandler: ProxyHandler<any> = {
       get(_target, property, receiver) {
@@ -978,14 +1005,7 @@ export class WorkerHandler<A extends CommonActions> {
 
         // symbol 类型的数据无法被传送到 Worker 中，只保留一些特定的 symbol 键用来做一些特殊处理
         if (typeof property === "symbol") {
-          if (property === revokeSymbol) {
-            return (options?: { derived?: boolean } | boolean | 0 | 1) => {
-              _this.revokeProxy(receiver, options);
-            };
-          } else if (property === proxyTypeSymbol) {
-            return proxyType;
-          }
-          return;
+          return handleSymbolKeys(property, receiver, proxyType);
         }
 
         let propertyValue: keyof any | (keyof any)[];
@@ -1241,14 +1261,8 @@ export class WorkerHandler<A extends CommonActions> {
                   yield await item;
                 }
               };
-            } else if (property === revokeSymbol) {
-              return (options?: { derived?: boolean } | boolean | 0 | 1) => {
-                _this.revokeProxy(receiver, options);
-              };
-            } else if (property === proxyTypeSymbol) {
-              return proxyType;
             }
-            return;
+            return handleSymbolKeys(property, receiver, proxyType);
           } else if (isArrayMethodProperty(property)) {
             return getWrappedArrMethod(property);
           } else if (!isNaN(Number(property)) || property === "length") {
