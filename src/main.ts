@@ -1,6 +1,7 @@
 import { CommonActions, MsgFromWorker, GetDataType } from "./worker.js";
 
 import { getTransfers, StructuredCloneable } from "./type-judge";
+import { TreeNode } from "./data-structure";
 
 //#region - symbols
 export const revokeSymbol: unique symbol = Symbol();
@@ -405,7 +406,7 @@ export class WorkerHandler<A extends CommonActions> {
   private currentProxyGetterId = 1;
 
   // proxyWeakMap 中存储 proxy 和与之对应的 proxyTargetId 和 revoke 方法
-  private proxyWeakMap = new WeakMap<any, ProxyContextX>();
+  private proxyWeakMap = new WeakMap<any, TreeNode<ProxyContextX>>();
 
   // 当 Worker Proxy 通过 apply 操作或 construct 操作在 Worker 中产生了新的需要代理的数据，而无法及时在 Main 中获取其 proxyTargetId 时，使用这个临时的 temporaryProxyId 作为唯一标识符，每次调用 Worker Proxy 的 apply 或 construct 捕捉器时递增
   private currentTemporaryProxyId = 1;
@@ -737,7 +738,8 @@ export class WorkerHandler<A extends CommonActions> {
       A,
       keyof A,
       "get" | "apply" | "construct"
-    >
+    >,
+    parentProxy?: WorkerProxy<any>
   ) {
     const promise = new Promise((resolve) => {
       const handleProxylistenerMap: ListenerMap = {
@@ -754,11 +756,20 @@ export class WorkerHandler<A extends CommonActions> {
             e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
             e.data.getterId === handleProxyMsg.getterId
           ) {
+            const { trap } = handleProxyMsg;
+
+            const parent = parentProxy
+              ? ({
+                  proxy: parentProxy,
+                  type: trap === "get" ? "parent" : "adoptiveParent",
+                } as const)
+              : undefined;
             resolve(
               this.createProxy(
                 e.data.proxyTargetId,
                 "sub_proxy",
-                e.data.isArray
+                e.data.isArray,
+                parent
               )
             );
             this.handleListeners(handleProxylistenerMap, false);
@@ -783,18 +794,16 @@ export class WorkerHandler<A extends CommonActions> {
     );
   }
 
-  private handleProxy(handleProxyMsg: MsgToWorker<"handle_proxy">) {
+  private handleProxy(
+    handleProxyMsg: MsgToWorker<"handle_proxy">,
+    proxy?: WorkerProxy<any>
+  ) {
     try {
       this.worker.postMessage(handleProxyMsg);
-      const { trap } = handleProxyMsg;
-      if (trap === "get") {
-        return this.receiveProxyData(handleProxyMsg);
-      } else if (trap === "set") {
+      if (handleProxyMsg.trap === "set") {
         return true;
-      } else if (trap === "apply") {
-        return this.receiveProxyData(handleProxyMsg);
-      } else if (trap === "construct") {
-        return this.receiveProxyData(handleProxyMsg);
+      } else {
+        return this.receiveProxyData(handleProxyMsg, proxy);
       }
     } catch (error) {
       console.error(error);
@@ -833,7 +842,7 @@ export class WorkerHandler<A extends CommonActions> {
     handleArguments: (argumentsList: any[]) => {
       const argProxyContexts: (ProxyContext | undefined)[] = [];
       const newArgumentsList = argumentsList.map((arg, index) => {
-        const argProxyContext = this.proxyWeakMap.get(arg);
+        const argProxyContext = this.proxyWeakMap.get(arg)?.value;
         if (argProxyContext) {
           const {
             proxyTargetId,
@@ -880,8 +889,22 @@ export class WorkerHandler<A extends CommonActions> {
    */
   private createProxy(
     proxyTargetId: number,
-    workerProxyType: "root_proxy" | "sub_proxy",
+    workerProxyType: "root_proxy",
     isTargetArray: boolean
+  ): any;
+
+  /**
+   * 创建一个 Worker Proxy
+   * @param proxyTargetId Worker 中定义的 proxy 引用的数据的唯一标识符
+   * @param workerProxyType Worker Proxy 的类型
+   * @param isTargetArray Worker Proxy 引用的数据是不是数组
+   * @param parent 包含该 proxy 的 parent 或 adoptiveParent 的信息，只有当 workerProxyType 为 "sub_proxy" 时需要接收该参数
+   */
+  private createProxy(
+    proxyTargetId: number,
+    workerProxyType: "sub_proxy",
+    isTargetArray: boolean,
+    parent?: { proxy: WorkerProxy<any>; type: "parent" | "adoptiveParent" }
   ): any;
 
   /**
@@ -900,7 +923,9 @@ export class WorkerHandler<A extends CommonActions> {
 
   private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
     const _this = this;
+
     //#region - 整理重载参数
+
     let proxyType: ProxyType =
       typeof p1 === "string" ? "Worker Proxy" : "Carrier Proxy";
 
@@ -911,9 +936,19 @@ export class WorkerHandler<A extends CommonActions> {
     let parentProperty: keyof any | (keyof any)[] | null = null;
     let temporaryProxyIdForPickingUp: number | null = null;
 
+    let workerProxyType: "root_proxy" | "sub_proxy" | null = null;
+    let parent: {
+      proxy: WorkerProxy<any>;
+      type: "parent" | "adoptiveParent";
+    } | null = null;
+
     if (proxyType === "Worker Proxy") {
       isTargetArray = p2;
+      workerProxyType = p1;
       if (isTargetArray) proxyType = "Worker Array Proxy";
+      if (workerProxyType === "sub_proxy") {
+        parent = p3;
+      }
     } else {
       const carriedPromise: Promise<any> = p1;
       parentProperty = p2;
@@ -955,7 +990,13 @@ export class WorkerHandler<A extends CommonActions> {
     let exposedProxy: any;
     let exposedProxyRevoke: (() => void) | null = null;
 
-    // 返回当访问 Worker Proxy 相关对象的不同 symbol 键时需要返回的内容
+    /**
+     * 返回当访问 Worker Proxy 相关对象的不同 symbol 键时需要返回的内容
+     * @param key
+     * @param proxy
+     * @param proxyType
+     * @returns
+     */
     function handleSymbolKeys(
       key: symbol,
       proxy: WorkerProxy<any> | CarrierProxy<any>,
@@ -980,326 +1021,363 @@ export class WorkerHandler<A extends CommonActions> {
       }
     }
 
-    // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
-    const dataProxyHandler: ProxyHandler<any> = {
-      get(_target, property, receiver) {
-        if (proxyType === "Carrier Proxy") {
-          // 当前创建的是 Carrier Proxy 时，dataProxy 的 target 是 promiseProxy，需要代理对它的 get 操作
-          if (property in _target) {
-            const value = _target[property];
-            if (typeof value === "function") {
-              return value.bind(_target);
-            } else {
-              return value;
+    /**
+     * 创建 dataProxy
+     * @param arrayProxy 如果创建的 dataProxy 不作为 exposedProxy，而是用作生成作为 exposedProxy 的 arrayProxy，则将该 arrayProxy 传入，在注册 Child 时使用该 arrayProxy
+     * @returns
+     */
+    function createDataProxy(arrayProxy?: any) {
+      let dataProxy: any;
+
+      // dataProxy 是操作 data 的 Proxy，对 dataProxy 的操作最终会反应到 Worker 中被引用的 Data 上，其中一些特定操作会被反应到 tailProxy 上
+      const dataProxyHandler: ProxyHandler<any> = {
+        get(_target, property) {
+          if (proxyType === "Carrier Proxy") {
+            // 当前创建的是 Carrier Proxy 时，dataProxy 的 target 是 promiseProxy，需要代理对它的 get 操作
+            if (property in _target) {
+              const value = _target[property];
+              if (typeof value === "function") {
+                return value.bind(_target);
+              } else {
+                return value;
+              }
             }
-          }
-        } else {
-          // 当前创建的是 Worker Proxy 时，如果对其进行 await 操作，需进行无视，否则调用对应方法的消息将被发送到 Worker 中，而传入的回调函数无法被结构化克隆
-          if (
-            property === "then" ||
-            property === "catch" ||
-            property === "finally"
-          )
-            return;
-        }
-
-        // symbol 类型的数据无法被传送到 Worker 中，只保留一些特定的 symbol 键用来做一些特殊处理
-        if (typeof property === "symbol") {
-          return handleSymbolKeys(property, receiver, proxyType);
-        }
-
-        let propertyValue: keyof any | (keyof any)[];
-
-        if (parentProperty) {
-          const parentPropertyArray = Array.isArray(parentProperty)
-            ? parentProperty
-            : [parentProperty];
-          if (Array.isArray(property)) {
-            propertyValue = [...parentPropertyArray, ...property];
           } else {
-            propertyValue = [...parentPropertyArray, property];
+            // 当前创建的是 Worker Proxy 时，如果对其进行 await 操作，需进行无视，否则调用对应方法的消息将被发送到 Worker 中，而传入的回调函数无法被结构化克隆
+            if (
+              property === "then" ||
+              property === "catch" ||
+              property === "finally"
+            )
+              return;
           }
-        } else {
-          propertyValue = property;
-        }
 
-        return _this.handleProxy({
-          type: "handle_proxy",
-          trap: "get",
-          proxyTargetId,
-          property: propertyValue,
-          getterId: _this.currentProxyGetterId++,
-          temporaryProxyIdForDepositing: temporaryProxyIdForPickingUp
-            ? _this.currentTemporaryProxyId++
-            : null, // 对于 Carrier Proxy 的 get 操作，如果它的创建链上出现过 temporaryProxyId，那么需要再创建一个 temporaryProxyId
-          temporaryProxyIdForPickingUp,
-        });
-      },
+          // symbol 类型的数据无法被传送到 Worker 中，只保留一些特定的 symbol 键用来做一些特殊处理
+          if (typeof property === "symbol") {
+            return handleSymbolKeys(property, dataProxy, proxyType);
+          }
 
-      set(_target, property, value) {
-        if (property in _target) {
-          return Reflect.set(_target, property, value);
-        }
+          let propertyValue: keyof any | (keyof any)[];
 
-        let propertyValue: keyof any | (keyof any)[];
-
-        if (parentProperty) {
-          const parentPropertyArray = Array.isArray(parentProperty)
-            ? parentProperty
-            : [parentProperty];
-          if (Array.isArray(property)) {
-            propertyValue = [...parentPropertyArray, ...property];
+          if (parentProperty) {
+            const parentPropertyArray = Array.isArray(parentProperty)
+              ? parentProperty
+              : [parentProperty];
+            if (Array.isArray(property)) {
+              propertyValue = [...parentPropertyArray, ...property];
+            } else {
+              propertyValue = [...parentPropertyArray, property];
+            }
           } else {
-            propertyValue = [...parentPropertyArray, property];
+            propertyValue = property;
           }
-        } else {
-          propertyValue = property;
-        }
 
-        try {
-          _this.checkClonability(value);
-        } catch (error) {
-          const valueProxyContextX = _this.proxyWeakMap.get(value);
-          if (valueProxyContextX) {
-            const valueProxyContext =
-              _this.utilsForProxy.reduceProxyContext(valueProxyContextX);
-            return _this.handleProxy({
+          return _this.handleProxy(
+            {
               type: "handle_proxy",
-              trap: "set",
+              trap: "get",
               proxyTargetId,
               property: propertyValue,
-              value: null,
-              valueProxyContext,
+              getterId: _this.currentProxyGetterId++,
+              temporaryProxyIdForDepositing: temporaryProxyIdForPickingUp
+                ? _this.currentTemporaryProxyId++
+                : null, // 对于 Carrier Proxy 的 get 操作，如果它的创建链上出现过 temporaryProxyId，那么需要再创建一个 temporaryProxyId
               temporaryProxyIdForPickingUp,
-            });
-          } else return false;
-        }
+            },
+            arrayProxy || dataProxy
+          );
+        },
 
-        return _this.handleProxy({
-          type: "handle_proxy",
-          trap: "set",
-          proxyTargetId,
-          property: propertyValue,
-          value,
-          temporaryProxyIdForPickingUp,
-        });
-      },
+        set(_target, property, value) {
+          if (property in _target) {
+            return Reflect.set(_target, property, value);
+          }
 
-      apply(_, thisArg, _argumentsList) {
-        // 处理 thisArg
-        const _thisProxyContext = _this.proxyWeakMap.get(thisArg);
+          let propertyValue: keyof any | (keyof any)[];
 
-        // 处理 argumentsList
-        const { argProxyContexts, argumentsList } =
-          _this.utilsForProxy.handleArguments(_argumentsList);
+          if (parentProperty) {
+            const parentPropertyArray = Array.isArray(parentProperty)
+              ? parentProperty
+              : [parentProperty];
+            if (Array.isArray(property)) {
+              propertyValue = [...parentPropertyArray, ...property];
+            } else {
+              propertyValue = [...parentPropertyArray, property];
+            }
+          } else {
+            propertyValue = property;
+          }
 
-        return _this.handleProxy({
-          type: "handle_proxy",
-          trap: "apply",
-          proxyTargetId,
-          getterId: _this.currentProxyGetterId++,
-          parentProperty: Array.isArray(parentProperty)
-            ? parentProperty
-            : parentProperty
-              ? [parentProperty]
-              : [],
-          argumentsList,
-          argProxyContexts,
-          thisProxyContext:
-            _this.utilsForProxy.reduceProxyContext(_thisProxyContext),
-          thisArg: _thisProxyContext ? undefined : thisArg,
-          temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
-          temporaryProxyIdForPickingUp,
-        });
-      },
+          try {
+            _this.checkClonability(value);
+          } catch (error) {
+            const valueProxyContextX = _this.proxyWeakMap.get(value)?.value;
+            if (valueProxyContextX) {
+              const valueProxyContext =
+                _this.utilsForProxy.reduceProxyContext(valueProxyContextX);
+              return _this.handleProxy({
+                type: "handle_proxy",
+                trap: "set",
+                proxyTargetId,
+                property: propertyValue,
+                value: null,
+                valueProxyContext,
+                temporaryProxyIdForPickingUp,
+              });
+            } else return false;
+          }
 
-      construct(_, _argumentsList) {
-        // 处理 argumentList
-        const { argProxyContexts, argumentsList } =
-          _this.utilsForProxy.handleArguments(_argumentsList);
+          return _this.handleProxy({
+            type: "handle_proxy",
+            trap: "set",
+            proxyTargetId,
+            property: propertyValue,
+            value,
+            temporaryProxyIdForPickingUp,
+          });
+        },
 
-        return _this.handleProxy({
-          type: "handle_proxy",
-          trap: "construct",
-          proxyTargetId,
-          getterId: _this.currentProxyGetterId++,
-          parentProperty: Array.isArray(parentProperty)
-            ? parentProperty
-            : parentProperty
-              ? [parentProperty]
-              : [],
-          argumentsList,
-          argProxyContexts,
-          temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
-          temporaryProxyIdForPickingUp,
-        });
-      },
-    };
+        apply(_, thisArg, _argumentsList) {
+          // 处理 thisArg
+          const _thisProxyContext = _this.proxyWeakMap.get(thisArg)?.value;
+
+          // 处理 argumentsList
+          const { argProxyContexts, argumentsList } =
+            _this.utilsForProxy.handleArguments(_argumentsList);
+
+          return _this.handleProxy(
+            {
+              type: "handle_proxy",
+              trap: "apply",
+              proxyTargetId,
+              getterId: _this.currentProxyGetterId++,
+              parentProperty: Array.isArray(parentProperty)
+                ? parentProperty
+                : parentProperty
+                  ? [parentProperty]
+                  : [],
+              argumentsList,
+              argProxyContexts,
+              thisProxyContext:
+                _this.utilsForProxy.reduceProxyContext(_thisProxyContext),
+              thisArg: _thisProxyContext ? undefined : thisArg,
+              temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
+              temporaryProxyIdForPickingUp,
+            },
+            arrayProxy || dataProxy
+          );
+        },
+
+        construct(_, _argumentsList) {
+          // 处理 argumentList
+          const { argProxyContexts, argumentsList } =
+            _this.utilsForProxy.handleArguments(_argumentsList);
+
+          return _this.handleProxy(
+            {
+              type: "handle_proxy",
+              trap: "construct",
+              proxyTargetId,
+              getterId: _this.currentProxyGetterId++,
+              parentProperty: Array.isArray(parentProperty)
+                ? parentProperty
+                : parentProperty
+                  ? [parentProperty]
+                  : [],
+              argumentsList,
+              argProxyContexts,
+              temporaryProxyIdForDepositing: _this.currentTemporaryProxyId++,
+              temporaryProxyIdForPickingUp,
+            },
+            arrayProxy || dataProxy
+          );
+        },
+      };
+
+      const { proxy, revoke } = Proxy.revocable(
+        promiseProxy || function () {},
+        dataProxyHandler
+      );
+
+      dataProxy = proxy;
+
+      return { dataProxy, dataProxyRevoke: revoke };
+    }
 
     //#region - arrayProxy
 
     // 当目标数据为 Array 时进行拓展处理
     if (isTargetArray) {
-      // 在 Main 中创建一个数组
-      const arr: any[] = [];
-
-      const dataProxy = new Proxy(
-        promiseProxy || function () {},
-        dataProxyHandler
-      );
       /**
-       * 将 Worker 中的数组同步给 Main 中的数组
+       * 创建 arrayProxy
+       * @returns
        */
-      async function drawArr() {
-        arr.length = await dataProxy.length;
-        for (let i = 0; i < arr.length; i++) {
-          arr[i] = await dataProxy[i];
+      function createArrayProxy() {
+        let arrayProxy: any;
+
+        // 在 Main 中创建一个数组
+        const arr: any[] = [];
+
+        const { dataProxy } = createDataProxy(arrayProxy);
+
+        /**
+         * 将 Worker 中的数组同步给 Main 中的数组
+         */
+        async function drawArr() {
+          arr.length = await dataProxy.length;
+          for (let i = 0; i < arr.length; i++) {
+            arr[i] = await dataProxy[i];
+          }
         }
-      }
 
-      /**
-       * updateArr 将 Main 中的数组同步给 Worker 中的数组
-       */
-      async function updateArr() {
-        const cloneableItemsInArr = arr.map((item) => {
-          try {
-            _this.checkClonability(item);
-          } catch (error) {
-            return;
-          }
-          return item;
-        });
-        const itemProxyContexts = arr.map((item) => {
-          const itemProxyContext = _this.utilsForProxy.reduceProxyContext(
-            _this.proxyWeakMap.get(item)
-          );
-          return itemProxyContext;
-        });
-        const updateArrMsg: MsgToWorker<"update_array"> = {
-          type: "update_array",
-          proxyTargetId,
-          itemProxyContexts,
-          cloneableItemsInArr,
-        };
-        _this.worker.postMessage(updateArrMsg);
-      }
+        /**
+         * updateArr 将 Main 中的数组同步给 Worker 中的数组
+         */
+        async function updateArr() {
+          const cloneableItemsInArr = arr.map((item) => {
+            try {
+              _this.checkClonability(item);
+            } catch (error) {
+              return;
+            }
+            return item;
+          });
+          const itemProxyContexts = arr.map((item) => {
+            const itemProxyContext = _this.utilsForProxy.reduceProxyContext(
+              _this.proxyWeakMap.get(item)?.value
+            );
+            return itemProxyContext;
+          });
+          const updateArrMsg: MsgToWorker<"update_array"> = {
+            type: "update_array",
+            proxyTargetId,
+            itemProxyContexts,
+            cloneableItemsInArr,
+          };
+          _this.worker.postMessage(updateArrMsg);
+        }
 
-      /**
-       * 生成改造后的数组方法
-       * @param property 要改造的数组方法名
-       * @returns
-       */
-      function getWrappedArrMethod(property: string) {
-        return function (...args: any[]) {
-          const methodResultPromise: Promise<any> = new Promise(
-            async (resolve, reject) => {
-              try {
-                await drawArr();
-                let methodResult: any;
-                // 对 forEach 进行重写，使得当 forEach 中接收的回调是异步函数时，当异步函数中的所有 await 执行完毕后，forEach 返回的 Promise 才会被 resolve
-                if (property === "forEach") {
-                  const callback = args[0];
-                  const callbackResults: any[] = [];
-                  for (const i in arr) {
-                    callbackResults.push(callback(arr[i], Number(i)));
+        /**
+         * 生成改造后的数组方法
+         * @param property 要改造的数组方法名
+         * @returns
+         */
+        function getWrappedArrMethod(property: string) {
+          return function (...args: any[]) {
+            const methodResultPromise: Promise<any> = new Promise(
+              async (resolve, reject) => {
+                try {
+                  await drawArr();
+                  let methodResult: any;
+                  // 对 forEach 进行重写，使得当 forEach 中接收的回调是异步函数时，当异步函数中的所有 await 执行完毕后，forEach 返回的 Promise 才会被 resolve
+                  if (property === "forEach") {
+                    const callback = args[0];
+                    const callbackResults: any[] = [];
+                    for (const i in arr) {
+                      callbackResults.push(callback(arr[i], Number(i)));
+                    }
+                    if (callbackResults[0] instanceof Promise)
+                      await Promise.all(callbackResults);
+                  } else {
+                    methodResult = (arr as any)[property].apply(arr, args);
                   }
-                  if (callbackResults[0] instanceof Promise)
-                    await Promise.all(callbackResults);
-                } else {
-                  methodResult = (arr as any)[property].apply(arr, args);
+                  // 会修改原数组的方法的名称
+                  const mutatingMethods = [
+                    "copyWithin",
+                    "fill",
+                    "pop",
+                    "push",
+                    "reverse",
+                    "shift",
+                    "sort",
+                    "splice",
+                    "unshift",
+                  ];
+                  if (mutatingMethods.indexOf(property) !== -1)
+                    await updateArr();
+                  resolve(methodResult);
+                } catch (error) {
+                  reject(error);
                 }
-                // 会修改原数组的方法的名称
-                const mutatingMethods = [
-                  "copyWithin",
-                  "fill",
-                  "pop",
-                  "push",
-                  "reverse",
-                  "shift",
-                  "sort",
-                  "splice",
-                  "unshift",
-                ];
-                if (mutatingMethods.indexOf(property) !== -1) await updateArr();
-                resolve(methodResult);
-              } catch (error) {
-                reject(error);
               }
-            }
-          );
+            );
 
-          return methodResultPromise;
-        };
-      }
+            return methodResultPromise;
+          };
+        }
 
-      /**
-       * 判断一个属性名是否是数组方法名
-       * @param property
-       * @returns
-       */
-      function isArrayMethodProperty(property: keyof any): property is string {
-        return typeof property === "symbol" || typeof property === "number"
-          ? false
-          : Object.getOwnPropertyNames(Array.prototype).indexOf(property) !== -1
-            ? typeof (arr as any)[property] === "function"
-            : false;
-      }
+        /**
+         * 判断一个属性名是否是数组方法名
+         * @param property
+         * @returns
+         */
+        function isArrayMethodProperty(
+          property: keyof any
+        ): property is string {
+          return typeof property === "symbol" || typeof property === "number"
+            ? false
+            : Object.getOwnPropertyNames(Array.prototype).indexOf(property) !==
+                -1
+              ? typeof (arr as any)[property] === "function"
+              : false;
+        }
 
-      const arrayProxyHandler: ProxyHandler<Array<any>> = {
-        get(arr, property, receiver) {
-          if (
-            property === "then" ||
-            property === "catch" ||
-            property === "finally"
-          ) {
-            return;
-          } else if (typeof property === "symbol") {
-            if (property === Symbol.asyncIterator) {
-              return async function* () {
+        const arrayProxyHandler: ProxyHandler<Array<any>> = {
+          get(arr, property) {
+            if (
+              property === "then" ||
+              property === "catch" ||
+              property === "finally"
+            ) {
+              return;
+            } else if (typeof property === "symbol") {
+              if (property === Symbol.asyncIterator) {
+                return async function* () {
+                  await drawArr();
+                  for (const item of arr) {
+                    yield await item;
+                  }
+                };
+              }
+              return handleSymbolKeys(property, arrayProxy, proxyType);
+            } else if (isArrayMethodProperty(property)) {
+              return getWrappedArrMethod(property);
+            } else if (!isNaN(Number(property)) || property === "length") {
+              const promise = new Promise(async (resolve) => {
                 await drawArr();
-                for (const item of arr) {
-                  yield await item;
-                }
-              };
+                resolve((arr as any)[property]);
+              });
+              return _this.createProxy(proxyTargetId, promise, property);
+            } else {
+              return;
             }
-            return handleSymbolKeys(property, receiver, proxyType);
-          } else if (isArrayMethodProperty(property)) {
-            return getWrappedArrMethod(property);
-          } else if (!isNaN(Number(property)) || property === "length") {
-            const promise = new Promise(async (resolve) => {
-              await drawArr();
-              resolve((arr as any)[property]);
-            });
-            return _this.createProxy(proxyTargetId, promise, property);
-          } else {
-            return;
-          }
-        },
-        set(arr, property, value) {
-          if (!isNaN(Number(property)) || property === "length") {
-            (arr as any)[property] = value;
-            updateArr();
-            return true;
-          } else {
-            return false;
-          }
-        },
-      };
+          },
+          set(arr, property, value) {
+            if (!isNaN(Number(property)) || property === "length") {
+              (arr as any)[property] = value;
+              updateArr();
+              return true;
+            } else {
+              return false;
+            }
+          },
+        };
 
-      const { proxy: arrayProxy, revoke: arrayProxyRevoke } = Proxy.revocable(
-        arr,
-        arrayProxyHandler
-      );
+        const { proxy, revoke } = Proxy.revocable(arr, arrayProxyHandler);
+
+        arrayProxy = proxy;
+
+        return { arrayProxy, arrayProxyRevoke: revoke };
+      }
+
+      const { arrayProxy, arrayProxyRevoke } = createArrayProxy();
 
       exposedProxy = arrayProxy;
       exposedProxyRevoke = arrayProxyRevoke;
 
       //#endregion
     } else {
-      const { proxy: dataProxy, revoke: dataProxyRevoke } = Proxy.revocable(
-        promiseProxy || function () {},
-        dataProxyHandler
-      );
+      const { dataProxy, dataProxyRevoke } = createDataProxy();
 
       exposedProxy = dataProxy;
       exposedProxyRevoke = dataProxyRevoke;
@@ -1309,14 +1387,37 @@ export class WorkerHandler<A extends CommonActions> {
 
     //#region - 映射 Proxy 与 ProxyContext
 
-    this.proxyWeakMap.set(exposedProxy, {
+    const proxyContext: ProxyContextX = {
       proxyTargetId,
       parentProperty,
       revoke: exposedProxyRevoke,
       isRevoked: false,
       temporaryProxyIdForPickingUp,
       proxyType,
-    });
+    };
+
+    let proxyContextTreeNode: TreeNode<ProxyContextX>;
+
+    // 如果 exposedProxy 是其它 Worker Proxy 的 Child 或 adoptedChild，则将其 ProxyContext 添加到对应的 ProxyContextTree 中
+    if (parent) {
+      const { proxy, type } = parent;
+      const parentProxyContextTreeNode = this.proxyWeakMap.get(proxy);
+      if (parentProxyContextTreeNode) {
+        if (type === "adoptiveParent") {
+          proxyContextTreeNode =
+            parentProxyContextTreeNode.addAdoptedChild(proxyContext);
+        } else {
+          proxyContextTreeNode =
+            parentProxyContextTreeNode.addChild(proxyContext);
+        }
+      } else {
+        proxyContextTreeNode = new TreeNode(proxyContext);
+      }
+    } else {
+      proxyContextTreeNode = new TreeNode(proxyContext);
+    }
+
+    this.proxyWeakMap.set(exposedProxy, proxyContextTreeNode);
 
     //#endregion
 
@@ -1388,18 +1489,25 @@ export class WorkerHandler<A extends CommonActions> {
     proxy: WorkerProxy<any>,
     options?: { derived?: boolean } | boolean | 0 | 1
   ) {
-    const proxyContext = this.proxyWeakMap.get(proxy);
-    if (!proxyContext) return;
-    if (!proxyContext.isRevoked) proxyContext.revoke();
-    proxyContext.isRevoked = true;
+    const proxyContextTreeNode = this.proxyWeakMap.get(proxy);
+    if (!proxyContextTreeNode) return;
 
     const derived = Boolean(
       typeof options === "object" ? options.derived : options
     );
 
+    for (const subTreeNode of derived
+      ? proxyContextTreeNode.allChildren()
+      : proxyContextTreeNode) {
+      const proxyContext = subTreeNode.value;
+      if (!proxyContext.isRevoked) proxyContext.revoke();
+      proxyContext.isRevoked = true;
+    }
+
+    // revoke_proxy 消息只需要提交一次，而不需要在上面的循环中提交。这是因为 Worker 中也通过 TreeNode 存储了 Worker Proxy 引用的数据之间的关系，可以在 Worker 中递归清理它们。这样做可以减少消息通信的次数。而之所以在 Main 中将 WorkerProxyContext 也通过 TreeNode 存储，是为了当废除 Worker Proxy 时，可以在 Main 中同步地知道哪些 children 和 adoptedChildren 一起被废除了，如果操作废弃了的 Worker Proxy 可以原地抛出错误。
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
-      proxyTargetId: proxyContext.proxyTargetId,
+      proxyTargetId: proxyContextTreeNode.value.proxyTargetId,
       derived,
     };
     this.worker.postMessage(revokeProxyMsg);
