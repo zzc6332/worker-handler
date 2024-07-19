@@ -739,8 +739,15 @@ export class WorkerHandler<A extends CommonActions> {
       keyof A,
       "get" | "apply" | "construct"
     >,
-    parentProxy?: WorkerProxy<any>
+    parentProxy: WorkerProxy<any>
   ) {
+    const { trap } = handleProxyMsg;
+
+    const parent = {
+      proxy: parentProxy,
+      type: trap === "get" ? "parent" : "adoptiveParent",
+    } as const;
+
     const promise = new Promise((resolve) => {
       const handleProxylistenerMap: ListenerMap = {
         message: (e: MessageEvent<MsgFromWorker>) => {
@@ -756,14 +763,6 @@ export class WorkerHandler<A extends CommonActions> {
             e.data.parentProxyTargetId === handleProxyMsg.proxyTargetId &&
             e.data.getterId === handleProxyMsg.getterId
           ) {
-            const { trap } = handleProxyMsg;
-
-            const parent = parentProxy
-              ? ({
-                  proxy: parentProxy,
-                  type: trap === "get" ? "parent" : "adoptiveParent",
-                } as const)
-              : undefined;
             resolve(
               this.createProxy(
                 e.data.proxyTargetId,
@@ -790,13 +789,20 @@ export class WorkerHandler<A extends CommonActions> {
       handleProxyMsg.proxyTargetId,
       promise,
       parentProperty,
+      parent,
       temporaryProxyIdForPickingUp || undefined
     );
   }
 
+  /**
+   * 发送 handleProxyMsg，并返回 receiveProxyData() 的结果
+   * @param handleProxyMsg
+   * @param proxy
+   * @returns
+   */
   private handleProxy(
     handleProxyMsg: MsgToWorker<"handle_proxy">,
-    proxy?: WorkerProxy<any>
+    proxy: WorkerProxy<any>
   ) {
     try {
       this.worker.postMessage(handleProxyMsg);
@@ -904,7 +910,7 @@ export class WorkerHandler<A extends CommonActions> {
     proxyTargetId: number,
     workerProxyType: "sub_proxy",
     isTargetArray: boolean,
-    parent?: { proxy: WorkerProxy<any>; type: "parent" | "adoptiveParent" }
+    parent: { proxy: WorkerProxy<any>; type: "parent" | "adoptiveParent" }
   ): any;
 
   /**
@@ -918,10 +924,17 @@ export class WorkerHandler<A extends CommonActions> {
     proxyTargetId: number,
     carriedPromise: Promise<any>,
     parentProperty: keyof any | (keyof any)[] | null,
+    parent: { proxy: WorkerProxy<any>; type: "parent" | "adoptiveParent" },
     temporaryProxyIdForPickingUp?: number
   ): any;
 
-  private createProxy(proxyTargetId: number, p1: any, p2: any, p3?: any) {
+  private createProxy(
+    proxyTargetId: number,
+    p1: any,
+    p2: any,
+    p3?: any,
+    p4?: any
+  ) {
     const _this = this;
 
     //#region - 整理重载参数
@@ -952,7 +965,8 @@ export class WorkerHandler<A extends CommonActions> {
     } else {
       const carriedPromise: Promise<any> = p1;
       parentProperty = p2;
-      temporaryProxyIdForPickingUp = p3 || null;
+      temporaryProxyIdForPickingUp = p4 || null;
+      parent = p3;
 
       //#endregion
 
@@ -1115,26 +1129,32 @@ export class WorkerHandler<A extends CommonActions> {
             if (valueProxyContextX) {
               const valueProxyContext =
                 _this.utilsForProxy.reduceProxyContext(valueProxyContextX);
-              return _this.handleProxy({
-                type: "handle_proxy",
-                trap: "set",
-                proxyTargetId,
-                property: propertyValue,
-                value: null,
-                valueProxyContext,
-                temporaryProxyIdForPickingUp,
-              });
+              return _this.handleProxy(
+                {
+                  type: "handle_proxy",
+                  trap: "set",
+                  proxyTargetId,
+                  property: propertyValue,
+                  value: null,
+                  valueProxyContext,
+                  temporaryProxyIdForPickingUp,
+                },
+                arrayProxy || dataProxy
+              );
             } else return false;
           }
 
-          return _this.handleProxy({
-            type: "handle_proxy",
-            trap: "set",
-            proxyTargetId,
-            property: propertyValue,
-            value,
-            temporaryProxyIdForPickingUp,
-          });
+          return _this.handleProxy(
+            {
+              type: "handle_proxy",
+              trap: "set",
+              proxyTargetId,
+              property: propertyValue,
+              value,
+              temporaryProxyIdForPickingUp,
+            },
+            arrayProxy || dataProxy
+          );
         },
 
         apply(_, thisArg, _argumentsList) {
@@ -1347,7 +1367,12 @@ export class WorkerHandler<A extends CommonActions> {
                 await drawArr();
                 resolve((arr as any)[property]);
               });
-              return _this.createProxy(proxyTargetId, promise, property);
+              return _this.createProxy(
+                proxyTargetId,
+                promise,
+                property,
+                arrayProxy
+              );
             } else {
               return;
             }
@@ -1484,6 +1509,12 @@ export class WorkerHandler<A extends CommonActions> {
   /**
    * 废除 proxy，并清理 Worker 中对应的数据
    * @param proxy
+   */
+
+  /**
+   * 递归废除 Worker Proxy，并清理 Worker 中对应的数据
+   * @param proxy 要废除的 Worker Proxy
+   * @param options 配置参数 { derived?: boolean }，也可以简化为只传入布尔值或 0 | 1，如果为 true 则表示递归废弃该 Worker Proxy 的 Children 和 Adopted Children，否则只递归废弃 Children
    */
   revokeProxy(
     proxy: WorkerProxy<any>,
