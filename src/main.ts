@@ -1364,8 +1364,12 @@ export class WorkerHandler<A extends CommonActions> {
               return getWrappedArrMethod(property);
             } else if (!isNaN(Number(property)) || property === "length") {
               const promise = new Promise(async (resolve) => {
-                await drawArr();
-                resolve((arr as any)[property]);
+                if (property === "length") {
+                  resolve(await dataProxy.length);
+                } else {
+                  await drawArr();
+                  resolve((arr as any)[property]);
+                }
               });
               return _this.createProxy(
                 proxyTargetId,
