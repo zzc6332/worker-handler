@@ -676,16 +676,12 @@ export function createOnmessage<A extends CommonActions>(
 
       const proxyTargetTreeNode = proxyTargetTreeNodes.get(data.proxyTargetId);
       if (proxyTargetTreeNode === undefined) return;
-      if (ev.data.derived) {
-        for (const subTreeNode of proxyTargetTreeNode.allChildren()) {
-          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
-        }
-      } else {
-        for (const subTreeNode of proxyTargetTreeNode) {
-          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
-        }
+
+      for (const subTreeNode of data.derived
+        ? proxyTargetTreeNode.allChildren()
+        : proxyTargetTreeNode) {
+        // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+        proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
       }
 
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
