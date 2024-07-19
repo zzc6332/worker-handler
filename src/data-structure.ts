@@ -9,8 +9,10 @@ export class TreeNode<T> {
 
   constructor(public value: T) {}
 
-  private addChildGenerally(value: T, isAdoptedChild: boolean = false) {
-    const childNode = new TreeNode(value);
+  addChildNodeGenerally(
+    childNode: TreeNode<T>,
+    isAdoptedChild: boolean = false
+  ) {
     if (isAdoptedChild) {
       this.adoptedChildren.push(childNode);
       childNode.adoptiveParent = this;
@@ -19,6 +21,18 @@ export class TreeNode<T> {
       childNode.parent = this;
     }
     return childNode;
+  }
+
+  addChildNode(childNode: TreeNode<T>) {
+    return this.addChildNodeGenerally(childNode);
+  }
+
+  addAdoptedChildNode(adoptedChildNode: TreeNode<T>) {
+    return this.addChildNodeGenerally(adoptedChildNode, true);
+  }
+
+  private addChildGenerally(value: T, isAdoptedChild: boolean = false) {
+    return this.addChildNodeGenerally(new TreeNode(value), isAdoptedChild);
   }
 
   addChild(value: T) {

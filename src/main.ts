@@ -1247,6 +1247,13 @@ export class WorkerHandler<A extends CommonActions> {
           arr.length = await dataProxy.length;
           for (let i = 0; i < arr.length; i++) {
             arr[i] = await dataProxy[i];
+            // 处理 arrayProxyContext 和  itemProxyContext 的关系
+            const arrayProxyContextTreeNode =
+              _this.proxyWeakMap.get(arrayProxy);
+            const itemProxyContextTreeNode = _this.proxyWeakMap.get(arr[i]);
+            if (arrayProxyContextTreeNode && itemProxyContextTreeNode) {
+              arrayProxyContextTreeNode?.addChildNode(itemProxyContextTreeNode);
+            }
           }
         }
 
