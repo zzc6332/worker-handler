@@ -1461,7 +1461,7 @@ export class WorkerHandler<A extends CommonActions> {
     if (
       FinalizationRegistry &&
       this.autoCleanup &&
-      proxyType === "Worker Proxy" // 当创建的 Proxy 是 Carrier Proxy 时，此时对应的 proxyTargetId 已经关联到了 Worker Proxy 中，因此不需要通过 Carrier Proxy 进行数据回收，只要处理 Worker Proxy 就好
+      proxyType !== "Carrier Proxy" // 当创建的 Proxy 是 Carrier Proxy 时，此时对应的 proxyTargetId 已经关联到了 Worker Proxy 中，因此不需要通过 Carrier Proxy 进行数据回收，只要处理 Worker Proxy 就好
     ) {
       // 先保存当前 _this.currentRegistryId 的值，用于在创建 FinalizationRegistry 的回调函数中使用
       const registryId = _this.currentRegistryId;
