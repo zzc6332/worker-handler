@@ -4,8 +4,10 @@ import { getTransfers, StructuredCloneable } from "./type-judge";
 import { TreeNode } from "./data-structure";
 
 //#region - symbols
+
 export const revokeSymbol: unique symbol = Symbol();
 export const proxyTypeSymbol: unique symbol = Symbol();
+
 //#endregion
 
 //#region - types
@@ -57,7 +59,7 @@ type MsgToWorkerBasic<
   cloneableItemsInArr: any[];
   temporaryProxyIdForDepositing: number;
   temporaryProxyIdForPickingUp: number | null;
-  derived: boolean;
+  traverse: "children" | "adopted_children" | null;
 };
 
 export type MsgToWorker<
@@ -126,7 +128,7 @@ export type MsgToWorker<
               >
             : never
     : T extends "revoke_proxy"
-      ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId" | "derived">
+      ? Pick<MsgToWorkerBasic<T>, "type" | "proxyTargetId" | "traverse">
       : T extends "update_array"
         ? Pick<
             MsgToWorkerBasic<T>,
@@ -1473,7 +1475,7 @@ export class WorkerHandler<A extends CommonActions> {
         const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
           type: "revoke_proxy",
           proxyTargetId,
-          derived: false,
+          traverse: null,
         };
         this.worker.postMessage(revokeProxyMsg);
         _this.registries.delete(registryId);
@@ -1522,11 +1524,6 @@ export class WorkerHandler<A extends CommonActions> {
   //#region - revokeProxy
 
   /**
-   * 废除 proxy，并清理 Worker 中对应的数据
-   * @param proxy
-   */
-
-  /**
    * 递归废除 Worker Proxy，并清理 Worker 中对应的数据
    * @param proxy 要废除的 Worker Proxy
    * @param options 配置参数 { derived?: boolean }，也可以简化为只传入布尔值或 0 | 1，如果为 true 则表示递归废弃该 Worker Proxy 的 Children 和 Adopted Children，否则只递归废弃 Children
@@ -1562,7 +1559,7 @@ export class WorkerHandler<A extends CommonActions> {
     const revokeProxyMsg: MsgToWorker<"revoke_proxy"> = {
       type: "revoke_proxy",
       proxyTargetId: proxyContextTreeNode.value.proxyTargetId,
-      derived,
+      traverse: derived ? "adopted_children" : "children",
     };
     this.worker.postMessage(revokeProxyMsg);
   }

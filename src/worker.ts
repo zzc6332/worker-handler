@@ -677,11 +677,17 @@ export function createOnmessage<A extends CommonActions>(
       const proxyTargetTreeNode = proxyTargetTreeNodes.get(data.proxyTargetId);
       if (proxyTargetTreeNode === undefined) return;
 
-      for (const subTreeNode of data.derived
-        ? proxyTargetTreeNode.allChildren()
-        : proxyTargetTreeNode) {
-        // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
-        proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+      const { traverse } = data;
+      if (traverse) {
+        for (const subTreeNode of traverse === "adopted_children"
+          ? proxyTargetTreeNode.allChildren()
+          : proxyTargetTreeNode) {
+          // console.log("被 revoke 的 proxyTargetTreeNode:", subTreeNode);
+          proxyTargetTreeNodes.delete(subTreeNode.value.proxyTargetId);
+        }
+      } else {
+        // console.log("被 revoke 的 proxyTargetTreeNode:", proxyTargetTreeNode);
+        proxyTargetTreeNodes.delete(proxyTargetTreeNode.value.proxyTargetId);
       }
 
       // console.log("revoke 之后的 proxyTargetTreeNodes： ", proxyTargetTreeNodes);
