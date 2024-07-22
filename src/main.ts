@@ -26,7 +26,7 @@ export interface ProxyContext {
 }
 
 interface ProxyContextX extends ProxyContext {
-  revoke: () => void;
+  revoke: WeakRef<() => void> | (() => void);
   isRevoked: boolean;
   proxyType: ProxyType;
 }
@@ -1423,10 +1423,14 @@ export class WorkerHandler<A extends CommonActions> {
 
     //#region - 映射 Proxy 与 ProxyContext
 
+    const revoke = WeakRef
+      ? new WeakRef(exposedProxyRevoke)
+      : exposedProxyRevoke;
+
     const proxyContext: ProxyContextX = {
       proxyTargetId,
       parentProperty,
-      revoke: exposedProxyRevoke,
+      revoke,
       isRevoked: false,
       temporaryProxyIdForPickingUp,
       proxyType,
@@ -1542,7 +1546,15 @@ export class WorkerHandler<A extends CommonActions> {
       ? proxyContextTreeNode.allChildren()
       : proxyContextTreeNode) {
       const proxyContext = subTreeNode.value;
-      if (!proxyContext.isRevoked) proxyContext.revoke();
+      if (!proxyContext.isRevoked) {
+        const { revoke } = proxyContext;
+        if (revoke instanceof WeakRef) {
+          const revokeFn = revoke.deref();
+          if (revokeFn) revokeFn();
+        } else {
+          revoke();
+        }
+      }
       proxyContext.isRevoked = true;
     }
 
