@@ -1,7 +1,7 @@
 # worker-handler
 
 <div style="text-align: center;">
-    <span style="font-weight:bold;">English</span> | <a href="./README-zh_CN.md">简体中文</a> 
+    <span style="font-weight:bold;">English</span> | <a href="./README-zh_CN.md">简体中文</a>
 </div>
 
 ## OvewrView
@@ -42,8 +42,8 @@ onmessage = createOnmessage({
 // demo.main.js
 import { WorkerHandler } from "worker-handler"; // It can also be imported from "worker-handler/main".
 
-// import workerUrl from "./demo.worker.ts?worker&url"; // in vite
-// import workerInstance from "./demo.worker.ts?worker"; // in vite
+// import workerUrl from "./demo.worker.js?worker&url"; // in vite
+// import workerInstance from "./demo.worker.js?worker"; // in vite
 
 const demoWorker = new WorkerHandler(
   // In Vite, workerUrl or workerInstance can also be used as the parameter.
@@ -62,7 +62,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 
 ## Typescript
 
-`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and reveiving ends when passing messages between `Main` and `Worker`. 
+`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and reveiving ends when passing messages between `Main` and `Worker`.
 
 <span id="ts-example">The following is a simple example of using `worker-handler` in typescript:</span>
 
@@ -70,7 +70,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 // demo.worker.ts
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
-/* 
+/*
  * Define the types for `Actions`, which will subsequently be passed as generic parameters in two places:
  * - When using `createOnmessage()` in `Worker`.
  * - When using `new WorkerHandler()`` in `Main`.
@@ -119,7 +119,7 @@ The parameters received by `excute()` from the third one onwards are all `payloa
 
 The second parameter is an object that specifies connection configuration options, which contains two properties named `transfer` and `timeout`:
 
-- The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
+- The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred.
 
   If the value of `transfer` is `"auto"`, then the `transferable objects` in `payloads` wil be automatically identified.
 
@@ -299,7 +299,7 @@ demoWorker
 
 ## <span id="Worker_Proxy">Worker Proxy</span>
 
-Starting from `worker-handler v0.2.0`, in environments that support [Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy), messages that cannot be handled by the [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) is also allowed to be passed.
+Starting from `v0.2.0`, in environments that [support](https://caniuse.com/?search=Proxy) [Proxy](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Proxy), messages that cannot be handled by the [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm) is also allowed to be passed.
 
 ### Basic Usage
 
@@ -307,7 +307,7 @@ If the data sent by `Worker` to `Main` cannot be structured cloned, then a `Prox
 
 - It is possible to operate on `Worker Proxy` in `Main`, and `Worker Proxy` will update these operations to its referenced data.
 - The currently implemented `traps` for `Worker Proxy` are: `get`, `set`, `apply`, `construct`.
-- Since message passing is asynchronous, operations that return results such as `get`, `apply`, `construct` will return a new `promise-like` proxy object, representing the result of the operation. In environments that support the `await` syntax, adding `await` before operating on the `Proxy` (except for `set`) can simulate operations on its referenced data. In most cases, if you need to perform chained operations on `Worker Proxy`, you only need to use the `await` keyword once.
+- Since message passing is asynchronous, operations that return results such as `get`, `apply`, `construct` will return a new promise-like proxy object, representing the result of the operation. In environments that support the `await` syntax, adding `await` before operating on the `Proxy` (except for `set`) can simulate operations on its referenced data. In most cases, if you need to perform chained operations on `Worker Proxy`, you only need to use the `await` keyword once.
 - If the data accessed by operating the `Worker Proxy` still cannot be structured cloned, a new `Worker Proxy` referencing that data will be obtained .
 
 For example:
@@ -356,7 +356,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
 );
 
 async function init() {
-  const { data } = await worker.execute("returnUncloneableData").promise;
+  const { data } = await demoWorker.execute("returnUncloneableData").promise;
 
   console.log(await data.f()); // "result of data.f()"
 
@@ -369,8 +369,8 @@ async function init() {
 
   console.log(await data.layer1.layer2); // "nested value"
   console.log(await data.layer1.f()); // "result of data.layer1.f()"
-  
-  // The `set` operation of `Worker Proxy` currently does not fully support the type system, so type assertions are required. Either of the following two methods can be chosen: 
+
+  // The `set` operation of `Worker Proxy` currently does not fully support the type system, so type assertions are required. Either of the following two methods can be chosen:
   (data.layer1.layer2 as any as UnwrapPromise<
     typeof data.layer1.layer2
   >) = "Hello Proxy!";
@@ -385,7 +385,7 @@ init();
 
 ### <span id="Worker_Array_Proxy">Worker Array Proxy</span>
 
-`Worker Array Proxy` is a special type of `Worker Proxy`. If the data referenced by a `Worker Proxy` is an array, then that `Worker Proxy` is a `Worker Array Proxy`.
+`Worker Array Proxy` (supported from `v0.2.1`) is a special type of `Worker Proxy`. If the data referenced by a `Worker Proxy` is an array, then that `Worker Proxy` is a `Worker Array Proxy`.
 
 Hereafter, the `Worker Array Proxy` will be referred to as `proxyArr`, and the array it references in the `Worker` will be referred to as `ogArr`.
 
@@ -423,20 +423,20 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
-  
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr").promise;
+
     console.log(await proxyArr[0]); // Worker Proxy
     console.log(await proxyArr[0].index); // 0
     console.log(await proxyArr[0].f()); // "result of index: 0"
     console.log(await proxyArr[0].layer1.layer2.index); // 0
   }
-  
+
   init();
   ~~~
 
@@ -448,17 +448,17 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
-  
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr").promise;
+
     console.log(await proxyArr.length); // 3
   }
-  
+
   init();
   ~~~
 
@@ -470,15 +470,15 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -490,7 +490,7 @@ onmessage = createOnmessage<DemoActions>({
     // "Iteration executed by `for await...of` is completed!"
     // --- The console output is as above. ---
   }
-  
+
   init();
   ~~~
 
@@ -500,15 +500,15 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     // `proxyArr.forEach()` is executed asynchronously. If you need to wait for the callback function in `forEach()` to complete, you can use the `await` keyword before `forEach()`.
     await proxyArr.forEach(async (item) => {
       console.log(await item.index);
@@ -520,7 +520,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // "Iteration executed by `forEach()` is completed!"
     // --- The console output is as above. ---
-  
+
     // 如果不使用 await 关键字，那么 forEach() 会晚于之后的同步代码执行
     proxyArr.forEach(async (item) => {
       console.log(await item.index);
@@ -533,7 +533,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // --- The console output is as above. ---
   }
-  
+
   init();
   ~~~
 
@@ -547,18 +547,18 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     const actualArr = await proxyArr.map((item) => item);
     console.log(actualArr); //  [Worker Proxy, Worker Proxy, Worker Proxy]
-  
+
     // Since `actualArr` is an actual array, it has a regular iterator interface and can be iterated using the `for...of` statement.
     for (const item of actualArr) {
       console.log(await item.index);
@@ -570,7 +570,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // "Iteration executed by `for...of` is completed!"
     // --- The console output is as above. ---
-      
+
     // Note that when using `forEach()` to iterate over an actual array, if the callback function passed in is an asynchronous function, it will not wait for the asynchronous operations in the callback to complete.
     actualArr.forEach(async (item) => {
       console.log(await item.index);
@@ -583,7 +583,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // --- The console output is as above. ---
   }
-  
+
   init();
   ~~~
 
@@ -593,21 +593,21 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     // Remove an item from the head of `ogArr`.
     console.log(await proxyArr.length); // 3
     const shifted = await proxyArr.shift();
     if (shifted) console.log(await shifted?.index); // 0
     console.log(await proxyArr.length); // 2
-      
+
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -615,10 +615,10 @@ onmessage = createOnmessage<DemoActions>({
     // 1
     // 2
     // --- The console output is as above. ---
-  
+
     // Insert an item at the tail of `ogArr`.
     if (shifted) console.log(await proxyArr.push(shifted)); // 3
-  
+
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -628,9 +628,260 @@ onmessage = createOnmessage<DemoActions>({
     // 0
     // --- The console output is as above. ---
   }
-  
+
   init();
   ~~~
+
+### Advanced
+
+#### `Worker Proxy` Related Objects
+
+The objects related to `Worker Proxy` are: `Worker Proxy`, `Worker Array Proxy`, and `Carrier Proxy`.
+
+The relationships between `Worker Proxy` objects:
+
+- If a `Worker Proxy` (referred as `WP1`) references target data that exists with in the structure of the target data referenced by another `Worker Proxy` (referred as `WP2`), then `WP1` is a `Child Worker Proxy` (aka `Child`) of `WP2`.
+- If a `Worker Proxy` (referred as `WP1`)  references target data that is generated by the target data referenced by another `Worker Proxy` (referred as `WP2`) through function calls or class instantiation, then `WP1` is a `Derived Worker Proxy` (aka `Adopted Child`) of `WP2`.
+- If `WP1` is a `Child` of a `Child` of `WP2`, then `WP1` is also a `Child` of `WP2`. If `WP1` is a descendant of `WP2`, and there is an `Adopted Child` in their relationship chain, then `WP1` is an `Adopted Child` of `WP2`.
+
+`Worker Proxy` can be obtained through the following ways:
+
+1. When executing the `Action` in `Worker` and receiving the data it sends, if the data cannot be structured cloned, a `Worker Proxy` that references this data will be received in `Main`.
+2. If the data obtained through a `Worker Proxy` still cannot be structured cloned, a new `Worker Proxy` that references the data will be obtained. There are two situations:
+   - After performing a `get` operation on a `Worker Proxy`, if a `Worker Proxy` is obtained asynchronously, the latter is a `Child` of the former.
+   - After performing an `apply` or a `construct` operation on a `Worker Proxy`, if a `Worker Proxy` is obtained asynchronously, the latter is an `Adopted Child` of the former.
+3. If a `Worker Proxy` is a `Worker Array Proxy`, then when it executes certain array methods that require a callback function, the `item` parameter in the callback function is a `Worker Proxy` that references the corresponding target array item, and the latter is a `Child` of the fommer.
+
+The `Worker Array Proxy` is a special type of `Worker Proxy`. If a `Worker Proxy` references target data that is an array, then it is a `Worker Array Proxy`. It can execute array methods, and its other behaviors are the same as a regular `Worker Proxy`.
+
+The `Carrier Proxy` is a promise-like object. Since operations on a `Worker Proxy` need to asynchronously take effect on the target data in `Worker` that it references, a carrier is needed to asynchronously obtain the result of the operation. The `Carrier Proxy` serves as this carrier. An operation on a `Worker Proxy` returns a `Carrier Proxy`, and the result of the operation is obtained asynchronously through this promise-like object. If further operations are performed on the `Carrier Proxy`, a new `Carrier Proxy` is also returned, enabling chain operations on the `Worker Proxy`.
+
+By accessing the <span id="proxyTypeSymbol">`proxyTypeSymbol`</span> key of the `Worker Proxy` related object, you can obtain a string that represents the type of this object:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    getString: () => string;
+    getUnclonable: () => { getString: () => string };
+    getArray: () => {
+      index: number;
+      f: () => string;
+      layer1: { layer2: { index: number } };
+    }[];
+  }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+  const data = {
+      getString: () => "result of getString()",
+      getUnclonable() {
+        return { getString: data.getString };
+      },
+      getArray: () =>
+        [0, 1, 2].map((_, index) => ({
+          index,
+          f: () => "index: " + index,
+          layer1: { layer2: { index } },
+        })),
+    };
+    return data;
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await demoWorker.execute("returnUncloneableData")
+    .promise;
+
+  console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+  console.log(data.getString[proxyTypeSymbol]); // "Carrier Proxy"
+  console.log((await data.getString)[proxyTypeSymbol]); // "Worker Proxy"
+  console.log((await data.getArray())[proxyTypeSymbol]); // "Worker Array Proxy"
+  console.log((await data.getUnclonable())[proxyTypeSymbol]); // "Worker Proxy"
+
+  const arrProxy = await data.getArray();
+  await arrProxy.forEach((item) => {
+    console.log(item[proxyTypeSymbol]); // "Worker Proxy"
+  });
+}
+
+init();
+~~~
+
+#### <span id="cleanup">Clean Up Target Data</span>
+
+When an `Action` in the `Worker` needs to post data that cannot be structured cloned to `Main`, a `Worker Proxy` referencing this data will be created in `Main`. The referenced data is stored and prevented from being garbage collected. Starting from `v0.2.4`, target data that is no longer in use can be cleaned up automatically or manually.
+
+##### Auto Cleanup
+
+In environments that [support](https://caniuse.com/?search=FinalizationRegistry) [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry), the referenced target data can be automatically cleaned up when the `Worker Proxy` is garbage collected. This feature can be enabled or disabled (enabled by default) when creating a `WorkerHandler` instance. For example:
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url)),
+  { autoCleanup: false } // disable autoCleanup
+);
+~~~
+
+##### Manual Cleanup
+
+For environments that do not support `FinalizationRegistry`, the target data will be cleaned up when the `Worker Proxy` that referencing it is manually revoked.
+
+When revoking a `Worker Proxy`, each of its `Children` will also be recursively revoked. Additionally, there is an option to specify whether to recursively revoke each of its `Adopted Children`.
+
+There are two ways to revoke a `Worker Proxy`, and they have the same effect:
+
+- Using `revokeProxy()` of the `WorkerHandler` instance:
+
+  ~~~typescript
+  /**
+   * Recursively revoke Worker Proxy and clean up the corresponding data.
+   * @param proxy The Worker Proxy to be revoked
+   * @param options Configuration parameter `{ derived?: boolean }`, and can also be simplified to just passing a boolean value or `0 | 1`. If `true`, it indicates recursively revoking the Worker Proxy’s Children and Adopted Children; otherwise, it only recursively revokes the Children.
+     */
+  revokeProxy(
+    proxy: WorkerProxy<any>,
+    options?: { derived?: boolean } | boolean | 0 | 1
+  ): void
+  ~~~
+
+- Using the method obtained with the `revokeSymbol` key of the `Worker Proxy`:
+
+  ~~~typescript
+  [revokeSymbol](options?: { derived?: boolean } | boolean | 0 | 1): void;
+  ~~~
+
+<span id="revokeSymbol">For example</span>:
+
+~~~typescript
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    getString: () => string;
+    getUnclonableData: () => { getString: () => string };
+    getArray: () => {
+      index: number;
+      f: () => string;
+      layer1: { layer2: { index: number } };
+    }[];
+  }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+  const data = {
+      getString: () => "result of getString()",
+      getUnclonableData() {
+        return { getString: data.getString };
+      },
+      getArray: () =>
+        [0, 1, 2].map((_, index) => ({
+          index,
+          f: () => "index: " + index,
+          layer1: { layer2: { index } },
+        })),
+    };
+    return data;
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, revokeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url)),
+  { autoCleanup: false }
+);
+
+// Revoke the data using different derived options and check the state of the different Proxy objects.
+async function init(derived?: { derived?: boolean } | boolean | 0 | 1) {
+  const { data } = await demoWorker.execute("returnUncloneableData2").promise;
+
+  const getString = await data.getString;
+  const arrayProxy = await data.array;
+  const array = await arrayProxy.map((item) => item);
+  const derivedArrayProxy = await data.getArray();
+  const derivedArray = await derivedArrayProxy.map((item) => item);
+  const getStringOfUnclonableData = await data.getUnclonableData().getString;
+
+  data[revokeSymbol](derived); // Equivalent to `demoWorker.revokeProxy(data, derived);`
+
+  try {
+    console.log(data[proxyTypeSymbol]);
+  } catch (error) {
+    console.log(error); // Whether or not derived is enabled, it will output: "TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // `getString` is a Child of `data`
+  try {
+    console.log(getString());
+  } catch (error) {
+    console.log(error); // Whether or not derived is enabled, it will output: "TypeError: Cannot perform 'apply' on a proxy that has been revoked"
+  }
+
+  // `array[0]` is a Child of `data`
+  try {
+    console.log(array[0][proxyTypeSymbol]);
+  } catch (error) {
+    console.log(error); // Whether or not derived is enabled, it will output: "TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // `derivedArray[0]` is an Adopted Child of `data`
+  try {
+    console.log(derivedArray[0][proxyTypeSymbol]); // When derived is not enabled, it outputs: "Worker Proxy"
+  } catch (error) {
+    console.log(error); // When derived is enabled, it outputs: "TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // getStringOfUnclonableData 是 data 的 Adopted Child
+  try {
+    console.log(await getStringOfUnclonableData()); // When derived is not enabled, it outputs: "result of getString()"
+  } catch (error) {
+    console.log(error); // When derived is enabled, it outputs: "TypeError: Cannot perform 'apply' on a proxy that has been revoked"
+  }
+}
+
+init(1); // Equivalent to `init(true);` or `init({ derived: true });`
+init(); // Equivalent to `init(0);` or `init(false);` or `init({ derived: false });`
+~~~
+
+##### Not Recommended Practices
+
+If the target data of a `Worker Proxy` is responded to by `this.$post()` in an `Action`, the following two practices may cause unexpected behavior in the cleanup of the target data when calling the corresponding `MessageSource.addEventListener()`:
+
+- Do not call `addEventListener()` asynchronously  after a period of time has passed since the `MessageSource` was created, for example:
+
+  ~~~typescript
+  const demoMessageSource = demoWorker.execute("demoAction")
+  setTimeout(()=>{
+    demoMessageSource.addEventListener(...)
+  }, 1000)
+  ~~~
+
+  Doing so may result in the `this.$post()` in the `Action` having already executed by the time the listener is added. This will cause the target data to be stored and prevented from being garbage collected, but without creating the corresponding `Worker Proxy` in `Main`. Consequently, the target data cannot be cleaned up by revoking (or garbage collecting) the corresponding `Worker Proxy` .
+
+- Do not call `addEventListener()` multiple times on a single `MessageSource`. Otherwise, multiple `Worker Proxies` will be created for the same target data. As any one of these `Worker Proxies` is revoked (or garbage collected), the target data will be cleaned up and will no longer be accessible to the other `Worker Proxies` that reference it.
 
 ## APIs
 
@@ -640,13 +891,23 @@ onmessage = createOnmessage<DemoActions>({
 
 Constructor:
 
-- The `WorkerHandler` constructor receives an instance of `Worker`. Alternatively, if the environment can provide a `string` or `URL` representing the path to the bundled `Worker` script, it can be passed in. The constructor returns an instance of `WorkerHandler`. 
+- Parameters:
+
+  - `workerSrc`:
+
+     A `Worker` instance. Alternatively, if the environment can provide the path to the bundled `Worker` script as a `string` or `URL`, thay can also be passed in as `workerSrc`.
+
+  - `options`:
+
+     Configuration options for creaing a `workerHandler` instance. Currently, there is only one property, `autoCleanup`, which is a `boolean`. It indicates whether to automatically clean up the target data referenced by the `Worker Proxy` that has been garbage collected if the environment supports `FinalizationRegistry`. The default value is `true`.
+
+- Returns a `WorkerHandler` instance.
 
 Instance methods:
 
-- `execute()`:
+- `execute(actionName, options, ...payloads)`:
 
-  The `execute()` method will open a connection and call the target `Action` in `Worker`. 
+  The `execute()` method will open a connection and call the target `Action` in `Worker`.
 
   Parameters:
 
@@ -660,11 +921,11 @@ Instance methods:
 
     The complete form of `options` is an object that includes the properties `transfer` and `timeout`:
 
-    - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred. 
+    - The value of `transfer` is an array of [transferable objects](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Transferable_objects) that will have their ownership transferred to the `Worker`,  used to specify the `transferable objects` in `payloads` that need to be transferred.
 
       If the value of `transfer` is `"auto"`, then the `transferable objects` in `payloads` wil be automatically identified.
 
-    - The value of `timeout` is a number of milliseconds representing the timeout duration for this connection. 
+    - The value of `timeout` is a number of milliseconds representing the timeout duration for this connection.
 
       After the specified timeout, the connection will be closed, no further responses will be received, and the `Promise` returned by the `Action` will become `rejected`.
 
@@ -672,7 +933,7 @@ Instance methods:
 
     If only one of `transfer` or `timeout` needs to take effect, you can directly pass the  value of the one you need to the `options`.
 
-    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, `[]`, any number less than or equal to `0`. 
+    If neither `transfer` nor `timeout` needs to take effect, you can omit the values when not passing any `payload`. Otherwise, you can pass any of the following values: `null`, `undefined`, `[]`, any number less than or equal to `0`.
 
   - ...`payloads`:
 
@@ -685,6 +946,20 @@ Instance methods:
 - `terminate()`
 
   The `terminate()` method will immediately terminate the `Worker`.
+
+- `revokeProxy(workerProxy, options?)`
+
+  Upon execution, the specified `Worker Proxy` and its related `Worker Proxies` will be revoked, and the referenced target data they reference will be cleaned up.
+
+  Parameters:
+
+  - `workerProxy`:
+
+    The `Worker Proxy` to be revoked.
+
+  - `options`:
+
+    Optional configuration parameters `{ derived?: boolean }`, which can also be simplified to a `boolean` value or `0 | 1`. If `true`, it indicates recursively revoking the `Children` and `Adopted Children` of the `Worker Proxy`; otherwise, it only recursively revokes the `Children`.
 
 #### MessageSource
 
@@ -704,7 +979,7 @@ Properties:
 
 - `onmessage`:
 
-  A callback function that is called when `Action` makes a `non-terminating response` message. 
+  A callback function that is called when `Action` makes a `non-terminating response` message.
 
   It receives a parameter `e`, through which the `non-terminating response` message made by `Action` can be accessed via `e.data`.
 
@@ -718,7 +993,7 @@ Properties:
 
   A number representing the current state of the connection :
 
-  - `0` — `connecting`, 
+  - `0` — `connecting`,
   - `1` — `open`,
   - `2` —`closed`.
 
@@ -732,7 +1007,25 @@ Methods:
 
 #### UnwrapPromise
 
-`UnwrapPromise` is an utility type that can accept a `Promise` type or a `PromiseLike` type and can extract the type inside it.
+`UnwrapPromise` is an utility type that can accept a `Promise` type or a `PromiseLike` type as a generic parameter and can extract the inner type. It is used for type assertion when performing `set` operations on a `Worker Proxy` or a `Carrier Proxy`.
+
+#### ReceivedData
+
+ReceivedData is a utility type that can accept any type (representing the type of data in the response from an `Action`) as a generic parameter. It obtains the type of corresponding data to be received in `Main` based on  whether the generic parameter can be structured cloned (it is either the generic parameter type itself or a `WorkerProxy` type).
+
+#### WorkerProxy / CarrierProxy
+
+These two types indicate that it is either a `Worker Proxy` or a `Carrier Proxy`. They accept a generic parameter representing the type of the target data referenced by the `Worker Proxy` or the `Carrier Proy`.
+
+In `worker-handler/main`, some `symbol` keys are provided. They can be used to access certain properties or methods of the `Worker Proxy` or the `Carrier Proxy`:
+
+- `proxyTypeSymbol`
+
+  Used to obtain a string that representing the type of the current `Proxy`. See the <a href="#proxyTypeSymbol" target="_self">example</a> for usage.
+
+- `revokeSymbol`
+
+  Only applicable to `Worker Proxy`, used to obtain a method to revoke the current `Worker Proxy` and clean up the corresponding data. See the <a href="#revokeSymbol" target="_self">example</a> for usage.
 
 ### worker-handler/worker
 
@@ -760,7 +1053,7 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
 
 - When passing messages, if the `transfer` option is not specified, all `transferable objects` will be automatically identified from the message and placed into `transfer`.
 
-- When sending a `terminating response` through the return value of `Action`, the return form of `[messageData, [...transferable]]` from version `v0.1.x` is discontinued. This means that if the response data is an array, it can also be returned directly. 
+- When sending a `terminating response` through the return value of `Action`, the return form of `[messageData, [...transferable]]` from version `v0.1.x` is discontinued. This means that if the response data is an array, it can also be returned directly.
 
   It is because if using `this.$end()` form to send a `terminating response`, `transfer` can be specified more intuitively, and everything that can be done using the return value form can also be done using `this.$end()`. Therefore, the use of the return value form has been simplified, making it more convenient to use in some situations to send `terminating responses`.
 
@@ -770,3 +1063,7 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
 
 - <a href="#Worker_Array_Proxy" target="_self">Add Worker Array Proxy feature.</a>
 - When passing messages, if the `transfer` option is not specified, `transferable objects` will not be transferred.
+
+### `v0.2.4`
+
+- <a href="#cleanup" target="_self">Supports cleaning up the target data referenced by the Worker Proxy that is no longer in use.</a>

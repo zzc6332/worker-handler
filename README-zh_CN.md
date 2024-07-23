@@ -42,8 +42,8 @@ onmessage = createOnmessage({
 // demo.main.js
 import { WorkerHandler } from "worker-handler"; // 也可以从 "worker-handler/main" 中引入
 
-// import workerUrl from "./demo.worker.ts?worker&url"; // in vite
-// import workerInstance from "./demo.worker.ts?worker"; // in vite
+// import workerUrl from "./demo.worker.js?worker&url"; // in vite
+// import workerInstance from "./demo.worker.js?worker"; // in vite
 
 const demoWorker = new WorkerHandler(
   // 如果是在 vite 环境中，可以传入上面的 workerUrl 或 workerInstance
@@ -70,7 +70,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 // demo.worker.ts
 import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 
-/* 
+/*
  * 定义 Actions 的类型，之后有以下两处地方需要将其作为泛型参数传入：
  * - 在 Worker 中使用 createOnmessage() 时
  * - 在 Main 中使用 new WorkerHandler() 时
@@ -197,11 +197,11 @@ onmessage = createOnmessage<DemoActions>({
 - 灵活匹配各种场景，体现在：
 
   - 使用 `this.$end()` 后，`action` 仍可以执行，只是无法再发送响应；
-  
+
   - 可以在 `action` 内部的回调函数中使用；
-  
+
   - 可以转移可转移对象。
-  
+
 - 不支持在箭头函数中使用。
 
 #### 响应空数据
@@ -303,7 +303,7 @@ demoWorker
 
 ## <span id="Worker_Proxy">Worker Proxy</span>
 
-从 `worker-handler v0.2.0` 开始，在支持 [Proxy](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Proxy) 的环境中，可以传递无法被[结构化克隆算法](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)处理的消息。
+从 ` v0.2.0` 开始，在[支持](https://caniuse.com/?search=Proxy) [Proxy](https://developer.mozilla.org/zh-CN/docs/Web/JavaScript/Reference/Global_Objects/Proxy) 的环境中，可以传递无法被[结构化克隆算法](https://developer.mozilla.org/zh-CN/docs/Web/API/Web_Workers_API/Structured_clone_algorithm)处理的消息。
 
 ### 基本用法
 
@@ -311,7 +311,7 @@ demoWorker
 
 - 可以在 `Main` 中操作 `Worker Proxy` ，`Worker Proxy` 会将这些操作同步给其引用的数据。
 - `Worker Proxy` 目前实现的捕获器有：`get`、`set`、`apply`、`construct`。
-- 由于消息传递是异步的，因此 `get`、`apply`、`construct` 这些会返回结果操作会返回一个类 `promise` 的新的 `proxy` 对象，表示操作的结果。在支持 `await` 语法的环境中，在对该 `Proxy` 进行（除了 `set` 的）操作前加上 `await` 关键字即可模拟对其引用的数据的操作。大多数情况下，如果需要对 `Worker Proxy` 进行链式调用操作，也只需使用一次 `await` 关键字。
+- 由于消息传递是异步的，因此 `get`、`apply`、`construct` 这些会返回结果操作会返回一个类 `Promise` 的新的 `proxy` 对象，表示操作的结果。在支持 `await` 语法的环境中，在对该 `Proxy` 进行（除了 `set` 的）操作前加上 `await` 关键字即可模拟对其引用的数据的操作。大多数情况下，如果需要对 `Worker Proxy` 进行链式操作，也只需使用一次 `await` 关键字。
 - 如果操作 `Worker Proxy` 获取到的数据仍无法被结构化克隆，那么将会得到一个新的引用了该数据的 `Worker Proxy`。
 
 示例：
@@ -360,7 +360,7 @@ const demoWorker = new WorkerHandler<DemoActions>(
 );
 
 async function init() {
-  const { data } = await worker.execute("returnUncloneableData").promise;
+  const { data } = await demoWorker.execute("returnUncloneableData").promise;
 
   console.log(await data.f()); // "result of data.f()"
 
@@ -373,7 +373,7 @@ async function init() {
 
   console.log(await data.layer1.layer2); // "nested value"
   console.log(await data.layer1.f()); // "result of data.layer1.f()"
-  
+
   // Worker Proxy 的 set 操作目前没有完全实现类型支持，需进行类型断言，以下两种方式任选其一
   (data.layer1.layer2 as any as UnwrapPromise<
     typeof data.layer1.layer2
@@ -389,7 +389,7 @@ init();
 
 ### <span id="Worker_Array_Proxy">Worker Array Proxy</span>
 
-`Worker Array Proxy` 是一种特殊的 `Worker Proxy`。如果一个 `Worker Proxy` 引用的数据是一个数组，那么该 `Worker Proxy` 就是 `Worker Array Proxy`。
+`Worker Array Proxy` （从 `v0.2.1` 开始支持）是一种特殊的 `Worker Proxy`。如果一个 `Worker Proxy` 引用的数据是一个数组，那么该 `Worker Proxy` 就是 `Worker Array Proxy`。
 
 以下将 `Worker Array Proxy` 称为 `proxyArr`，将它引用的 `Worker` 中的数组称为 `ogArr`。
 
@@ -427,20 +427,20 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
-  
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr").promise;
+
     console.log(await proxyArr[0]); // Worker Proxy
     console.log(await proxyArr[0].index); // 0
     console.log(await proxyArr[0].f()); // "result of index: 0"
     console.log(await proxyArr[0].layer1.layer2.index); // 0
   }
-  
+
   init();
   ~~~
 
@@ -452,17 +452,17 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr").promise;
-  
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr").promise;
+
     console.log(await proxyArr.length); // 3
   }
-  
+
   init();
   ~~~
 
@@ -474,15 +474,15 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -494,7 +494,7 @@ onmessage = createOnmessage<DemoActions>({
     // "for await...of 遍历完成！"
     // --- 控制台输出如上 ---
   }
-  
+
   init();
   ~~~
 
@@ -504,15 +504,15 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-  
+
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-  
+
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-  
+
     // proxyArr.forEach() 是异步执行的，如果需要等待 forEach() 中的回调函数执行完毕，可以在 forEach() 前使用 await 关键字
     await proxyArr.forEach(async (item) => {
       console.log(await item.index);
@@ -524,7 +524,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // "forEach() 遍历完成！"
     // --- 控制台输出如上 ---
-  
+
     // 如果不使用 await 关键字，那么 forEach() 会晚于之后的同步代码执行
     proxyArr.forEach(async (item) => {
       console.log(await item.index);
@@ -537,7 +537,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // --- 控制台输出如上 ---
   }
-  
+
   init();
   ~~~
 
@@ -557,7 +557,7 @@ onmessage = createOnmessage<DemoActions>({
   );
   
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
   
     const actualArr = await proxyArr.map((item) => item);
@@ -574,14 +574,14 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // "for...of 遍历完成！"
     // --- 控制台输出如上 ---
-      
+  
     // 注意，当对真数组使用 forEach() 遍历时，如果传入的回调函数是异步函数，那么将无法等待该回调的异步函数执行完毕
     actualArr.forEach(async (item) => {
       console.log(await item.index);
     });
     console.log("forEach() 遍历未开始！");
     // --- 控制台输出如下：---
-    // "forEach() 遍历未开始！"  
+    // "forEach() 遍历未开始！"
     // 0
     // 1
     // 2
@@ -590,9 +590,9 @@ onmessage = createOnmessage<DemoActions>({
   
   init();
   ~~~
-  
+
   如果使用 `unshift()`、`push()`  之类的方法，则可以改变 `proxyArr` 对应的 `ogArr`：
-  
+
   ~~~typescript
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
@@ -603,7 +603,7 @@ onmessage = createOnmessage<DemoActions>({
   );
   
   async function init() {
-    const { data: proxyArr } = await worker.execute("returnUncloneableArr")
+    const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
   
     // 从 ogArr 头部移除一项
@@ -611,7 +611,7 @@ onmessage = createOnmessage<DemoActions>({
     const shifted = await proxyArr.shift();
     if (shifted) console.log(await shifted?.index); // 0
     console.log(await proxyArr.length); // 2
-      
+  
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -636,6 +636,262 @@ onmessage = createOnmessage<DemoActions>({
   init();
   ~~~
 
+### 进阶
+
+#### Worker Proxy 相关对象
+
+与 `Worker Proxy` 相关的对象有：`Worker Proxy`、`Worker Array Proxy`、`Carrier Proxy`。
+
+`Worker Proxy` 之间的关系：
+
+- 如果一个 `Worker Proxy`（代称为 `WP1`）引用的目标数据存在于另一个 `Worker Proxy`（代称为 `WP2`）引用的目标数据的结构中，那么 `WP1` 是 `WP2` 的 `子 Worker Proxy`（也称为 `Child`）。
+- 如果一个 `Worker Proxy`（代称为 `WP1`）引用的目标数据是由另一个 `Worker Proxy`（代称为 `WP2`）引用的目标数据生成的（通过函数调用或者实例化类），那么 `WP1` 是 `WP2` 的 `衍生 Worker Proxy`（也称为 `Adopted Child`）。
+- 如果 `WP1` 是 `WP2` 的 `Child` 的 `Child`，那么 `WP1` 也是 `WP2` 的 `Child`；如果 `WP1` 是 `WP2` 的后代，且它们的关系链中存在 `Adopted Child`，那么 `WP1` 是 `WP2` 的 `Adopted Child`，以此类推。
+
+`Worker Proxy` 可以通过以下几种途径获得：
+
+1. 当执行 `Worker` 中的 `Action` 接收其发送的数据时，如果该数据无法被结构化克隆，那么 `Main` 中接收到的是引用了该数据的 `Worker Proxy`。
+
+2. 通过 `Worker Proxy` 获取的数据如果仍无法被结构化克隆，那么获取到的将是引用了该数据的 `Worker Proxy`。这里分两种情况：
+
+   - 对一个 `Worker Proxy` 进行 `get` 操作后，如果异步得到了一个 `Worker Proxy`，那么后者是前者的  `Child`。
+
+   - 对一个 `Worker Proxy` 进行 `apply` 或 `construct` 操作后，如果异步得到了一个 `Worker Proxy`，那么后者是前者的 `Adopted Child`。
+
+3. 如果一个 `Worker Proxy` 是 `Worker Array Proxy`，那么当它执行某些需要传入回调函数的数组方法时，回调函数中的 `item` 参数是一个引用了对应目标数组项的 `Worker Proxy`，后者是前者的 `Child`。
+
+`Worker Array Proxy` 是一种特殊的 `Worker Proxy`。如果一个 `Worker Proxy` 引用的目标数据是一个数组，那么它就是一个 `Worker Array Proxy`。它可以执行数组方法，其余行为与普通的 `Worker Proxy` 相同。
+
+`Carrier Proxy` 是一个类 `Promise` 对象。由于对 `Worker Proxy` 的操作需要异步地生效到它引用的 `Worker` 中的目标数据上，因此需要一个载体去异步获取操作结果。`Carrier Proxy` 就是这个载体，对一个 `Worker Proxy` 的操作会返回一个 `Carrier Proxy`，操作的结果通过这个类 `Promise` 对象异步获得。如果对 `Carrier Proxy` 继续操作，同样也会返回一个新的 `Carrier Proxy`，这使得 `Worker Proxy` 可以进行链式操作。
+
+通过访问 `Worker Proxy` 相关对象的 <span id="proxyTypeSymbol">`proxyTypeSymbol`</span> 键可以得到表示该 `Worker Proxy` 相关对象的类型的字符串：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    getString: () => string;
+    getUnclonable: () => { getString: () => string };
+    getArray: () => {
+      index: number;
+      f: () => string;
+      layer1: { layer2: { index: number } };
+    }[];
+  }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+  const data = {
+      getString: () => "result of getString()",
+      getUnclonable() {
+        return { getString: data.getString };
+      },
+      getArray: () =>
+        [0, 1, 2].map((_, index) => ({
+          index,
+          f: () => "index: " + index,
+          layer1: { layer2: { index } },
+        })),
+    };
+    return data;
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await demoWorker.execute("returnUncloneableData")
+    .promise;
+
+  console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+  console.log(data.getString[proxyTypeSymbol]); // "Carrier Proxy"
+  console.log((await data.getString)[proxyTypeSymbol]); // "Worker Proxy"
+  console.log((await data.getArray())[proxyTypeSymbol]); // "Worker Array Proxy"
+  console.log((await data.getUnclonable())[proxyTypeSymbol]); // "Worker Proxy"
+
+  const arrProxy = await data.getArray();
+  await arrProxy.forEach((item) => {
+    console.log(item[proxyTypeSymbol]); // "Worker Proxy"
+  });
+}
+
+init();
+~~~
+
+#### <span id="cleanup">清理目标数据</span>
+
+当 `Worker` 中的 `Action` 需要发送无法被结构化克隆的数据给 `Main` 时，会在 `Main` 中创建引用了该数据的 `Worker Proxy`，被引用的数据会被存储起来而不会被回收。从 `v0.2.4` 开始，不再被使用的目标数据可以被自动或手动清理。
+
+##### 自动清理
+
+在[支持](https://caniuse.com/?search=FinalizationRegistry) [FinalizationRegistry](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry) 的环境中，可以在 `Worker Proxy` 被垃圾回收时，自动清理其引用的目标数据。这项功能可以在创建 `WorkerHandler` 实例时指定是否开启（默认开启），例：
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url)),
+  { autoCleanup: false } // 不开启自动清理功能
+);
+~~~
+
+##### 手动清理
+
+对于不支持 `FinalizationRegistry` 的环境，目标数据会在引用它的 `Worker Proxy` 被手动废弃时被清理。
+
+废弃 `Worker Proxy` 时，它的每一个 `Child` 也会被一起递归废弃。还可以通过选项指定是否要递归废弃它的每一个 `Adopted Child`。
+
+废弃 `Worker Proxy` 有两种方式，它们的效果相同：
+
+- 使用 `WorkerHandler` 实例的 `revokeProxy` 方法：
+
+  ~~~typescript
+  /**
+   * 递归废除 Worker Proxy，并清理 Worker 中对应的数据
+   * @param proxy 要废除的 Worker Proxy
+   * @param options 配置参数 { derived?: boolean }，也可以简化为只传入布尔值或 0 | 1，如果为 true 则表示递归废弃该 Worker Proxy 的 Children 和 Adopted Children，否则只递归废弃 Children
+     */
+  revokeProxy(
+    proxy: WorkerProxy<any>,
+    options?: { derived?: boolean } | boolean | 0 | 1
+  ): void
+  ~~~
+
+- 使用 `Worker Proxy` 的 `revokeSymbol` 键获取到的方法：
+
+  ~~~typescript
+  [revokeSymbol](options?: { derived?: boolean } | boolean | 0 | 1): void;
+  ~~~
+
+<span id="revokeSymbol">示例</span>：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnUncloneableData: () => ActionResult<{
+    getString: () => string;
+    getUnclonableData: () => { getString: () => string };
+    getArray: () => {
+      index: number;
+      f: () => string;
+      layer1: { layer2: { index: number } };
+    }[];
+  }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnUncloneableData() {
+  const data = {
+      getString: () => "result of getString()",
+      getUnclonableData() {
+        return { getString: data.getString };
+      },
+      getArray: () =>
+        [0, 1, 2].map((_, index) => ({
+          index,
+          f: () => "index: " + index,
+          layer1: { layer2: { index } },
+        })),
+    };
+    return data;
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, revokeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url)),
+  { autoCleanup: false }
+);
+
+// 分别使用不同的 derived 选项对 data 进行 revoke，观察不同 Proxy 对象的状态
+async function init(derived?: { derived?: boolean } | boolean | 0 | 1) {
+  const { data } = await demoWorker.execute("returnUncloneableData2").promise;
+
+  const getString = await data.getString;
+  const arrayProxy = await data.array;
+  const array = await arrayProxy.map((item) => item);
+  const derivedArrayProxy = await data.getArray();
+  const derivedArray = await derivedArrayProxy.map((item) => item);
+  const getStringOfUnclonableData = await data.getUnclonableData().getString;
+
+  data[revokeSymbol](derived); // 等同于 demoWorker.revokeProxy(data, derived);
+
+  try {
+    console.log(data[proxyTypeSymbol]);
+  } catch (error) {
+    console.log(error); // 无论是否开启 derived 都会输出："TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // getString 是 data 的 Child
+  try {
+    console.log(getString());
+  } catch (error) {
+    console.log(error); // 无论是否开启 derived 都会输出："TypeError: Cannot perform 'apply' on a proxy that has been revoked"
+  }
+
+  // array[0] 是 data 的 Child
+  try {
+    console.log(array[0][proxyTypeSymbol]);
+  } catch (error) {
+    console.log(error); // 无论是否开启 derived 都会输出："TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // derivedArray[0] 是 data 的 Adopted Child
+  try {
+    console.log(derivedArray[0][proxyTypeSymbol]); // 当不开启 derived 时输出："Worker Proxy"
+  } catch (error) {
+    console.log(error); // 当开启 derived 时输出："TypeError: Cannot perform 'get' on a proxy that has been revoked"
+  }
+
+  // getStringOfUnclonableData 是 data 的 Adopted Child
+  try {
+    console.log(await getStringOfUnclonableData()); // 当不开启 derived 时输出："result of getString()"
+  } catch (error) {
+    console.log(error); // 当开启 derived 时输出："TypeError: Cannot perform 'apply' on a proxy that has been revoked"
+  }
+}
+
+init(1); // 等同于 init(true); 或 init({ derived: true });
+init(); // 等同于 init(0); 或 init(false); 或 init({ derived: false });
+~~~
+
+##### 不推荐的操作
+
+如果一个 `Worker Proxy` 的目标数据在 `Action` 中是由 `this.$post()` 响应的，那么在调用相应的 `MessageSource` 的 `addEventListener()` 时，以下两种操作可能导致目标数据的清理出现非预期的现象：
+
+- 不要在 `MessageSource` 被创建出来一段时间后异步地调用 `addEventListener()`，例如：
+
+  ~~~typescript
+  const demoMessageSource = demoWorker.execute("demoAction")
+  setTimeout(()=>{
+    demoMessageSource.addEventListener(...)
+  }, 1000)
+  ~~~
+
+  这样做可能会导致当监听器被添加时，`Action` 中已经执行过了 `this.$post()` ，这将使得这次要响应的目标数据被存储起来而 不会被垃圾回收，但却没有在 `Main` 中创建对应的 `Worker Proxy`，因此无法通过废除（或垃圾回收）对应的 `Worker Proxy` 来清理该目标数据。
+
+- 不要对一个 `MessageSource` 多次调用 `addEventListener()`。否则会为同一个目标数据创建多个 `Worker Proxy`。随着其中任意一个 `Worker Proxy` 被废除（或被垃圾回收），该目标数据就会被清理而无法再被其它一同引用它的 `Worker Proxy` 访问到。
+
 ## APIs
 
 ### worker-handler/main
@@ -644,11 +900,20 @@ onmessage = createOnmessage<DemoActions>({
 
 构造函数：
 
-- `WorkerHandler` 构造函数接收一个 `Worker` 实例。或者如果环境中能够提供打包后 `Worker` 脚本的路径的 `string` 或 `URL`，则可以将它们传入。返回一个 `WorkerHandler` 实例。
+- 接收参数：
+  - `workerSrc`：
+
+    一个 `Worker` 实例。或者如果环境中能够提供打包后 `Worker` 脚本的路径的 `string` 或 `URL`，则可以将它们传入。
+
+  - `options`：
+
+    创建 `workerHandler` 实例的配置选项，目前只有一个属性 `autoCleanup`，取值为布尔值。表示如果当前环境支持 `FinalizationRegistry` 时，是否自动清理已被垃圾回收的 `Worker Proxy` 所引用的目标数据。默认为 `true`。
+
+- 返回一个 `WorkerHandler` 实例。
 
 实例方法：
 
-- `execute()`：
+- `execute(actionName, options, ...payloads)`：
 
   执行后会开启一个连接，并调用 `Worker` 中对应的 `Action`。
 
@@ -689,6 +954,20 @@ onmessage = createOnmessage<DemoActions>({
 - `terminate()`
 
   执行后会立即终止 `Worker` 的行为。
+
+- `revokeProxy(workerProxy, options?)`
+
+  执行后会废除指定的 `Worker Proxy` 和其相关的 `Worker Proxy`，并清理它们引用的的目标数据。
+
+  参数：
+
+  - `workerProxy`：
+
+    要废除的 `Worker Proxy`。
+
+  - `options`：
+
+    可选的配置参数 `{ derived?: boolean }`，也可以简化为只传入布尔值或 `0 | 1`。如果为 `true` 则表示递归废弃该 `Worker Proxy` 的 `Children` 和 `Adopted Children`，否则只递归废弃 `Children`。
 
 #### MessageSource
 
@@ -736,7 +1015,25 @@ onmessage = createOnmessage<DemoActions>({
 
 #### UnwrapPromise
 
-`UnwrapPromise` 是一个工具类型，可以接受一个 `Promise` 类型或 `PromiseLike` 类型，并提取出其内部的类型。
+`UnwrapPromise` 是一个工具类型，可以接受一个 `Promise` 类型或 `PromiseLike` 类型作为泛型参数，并提取出其内部的类型。用于在对 `Worker Proxy` 或 `Carrier Proxy` 进行 `set` 操作时进行类型断言。
+
+#### ReceivedData
+
+`ReceivedData` 是一个工具类型，可以接受一个任意类型（代表 `Action` 中响应的数据的类型）作为泛型参数，并根据泛型参数是否可被结构化克隆而得到 `Main` 中将要接收到的对应数据的类型（它是泛型参数类型本身或是一个 `WorkerProxy` 类型）。
+
+#### WorkerProxy / CarrierProxy
+
+该类型表示这是一个 `Worker Proxy` 或 `Carrier Proxy`。接受一个泛型参数，表示该 `Worker Proxy` 或 `Carrier Proxy` 引用的目标数据的类型。
+
+`worker-handler/main` 中还提供了一些 `symbol` 键，通过这些 `symbol` 键可以访问 `WorkerProxy` 或 `CarrierProxy` 的一些特定属性或方法：
+
+- `proxyTypeSymbol`
+
+  用于获取表示当前 `Proxy` 类型的字符串。用法见<a href="#proxyTypeSymbol" target="_self">示例</a>。
+
+- `revokeSymbol`
+
+  仅适用于 `Worker Proxy`，用于获取一个废除当前 `Worker Proxy` 并清理相关数据的方法。用法见<a href="#revokeSymbol" target="_self">示例</a>。
 
 ### worker-handler/worker
 
@@ -772,6 +1069,10 @@ onmessage = createOnmessage<DemoActions>({
 
 ### `v0.2.1`
 
-- <a href="#Worker_Array_Proxy" target="_self">增加 Worker Array Proxy 特性</a>
+- <a href="#Worker_Array_Proxy" target="_self">增加 Worker Array Proxy 特性。</a>
 
 - 传递消息时，如果没有指定 `transfer` 选项，那么将不会转移可转移对象。
+
+### `v0.2.4`
+
+- <a href="#cleanup" target="_self">支持清理不再使用的 Worker Proxy 所引用的目标数据。</a>
