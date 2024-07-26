@@ -15,9 +15,12 @@ type MsgFromWorkerType =
   | "action_data"
   | "start_signal"
   | "message_error"
-  | "port_proxy"
+  | "action_promise_settled"
+  | "create_promise"
+  | "create_rootproxy"
   | "proxy_data"
-  | "create_subproxy";
+  | "create_subproxy"
+  | "proxy_promise_rejected";
 
 type MsgFromWorkerBasic<
   T extends MsgFromWorkerType = MsgFromWorkerType,
@@ -43,28 +46,54 @@ export type MsgFromWorker<
     ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId" | "done" | "error">
     : T extends "start_signal"
       ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId">
-      : T extends "port_proxy"
-        ? Pick<
-            MsgFromWorkerBasic<T>,
-            "type" | "executionId" | "proxyTargetId" | "done" | "isArray"
-          >
-        : T extends "proxy_data"
-          ? Pick<
-              MsgFromWorkerBasic<T>,
-              "type" | "proxyTargetId" | "getterId"
-            > & {
-              data: any;
+      : T extends "action_promise_settled"
+        ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId" | "done"> & {
+            dataPromiseId?: number;
+          } & (
+              | (Pick<MsgFromWorkerBasic<T>, "error"> & {
+                  promiseState: "rejected";
+                })
+              | (Partial<
+                  Pick<
+                    MsgFromWorkerBasic<T>,
+                    "data" | "proxyTargetId" | "isArray"
+                  >
+                > & {
+                  promiseState: "fulfilled";
+                })
+            )
+        : T extends "create_promise"
+          ? Pick<MsgFromWorkerBasic<T>, "type" | "executionId"> & {
+              done: false; // 只有当 done 为 false 时，即使用 this.$post() 传递 Promise 对象时，才需要在 Main 中创建一个对应的 Promise
+              dataPromiseId: number;
             }
-          : T extends "create_subproxy"
+          : T extends "create_rootproxy"
             ? Pick<
                 MsgFromWorkerBasic<T>,
-                | "type"
-                | "proxyTargetId"
-                | "parentProxyTargetId"
-                | "getterId"
-                | "isArray"
+                "type" | "executionId" | "proxyTargetId" | "done" | "isArray"
               >
-            : never;
+            : T extends "proxy_data"
+              ? Pick<
+                  MsgFromWorkerBasic<T>,
+                  "type" | "proxyTargetId" | "getterId"
+                > & {
+                  data: any;
+                }
+              : T extends "create_subproxy"
+                ? Pick<
+                    MsgFromWorkerBasic<T>,
+                    | "type"
+                    | "proxyTargetId"
+                    | "parentProxyTargetId"
+                    | "getterId"
+                    | "isArray"
+                  >
+                : T extends "proxy_promise_rejected"
+                  ? Pick<
+                      MsgFromWorkerBasic<T>,
+                      "type" | "proxyTargetId" | "getterId" | "error"
+                    >
+                  : never;
 
 type ProxyTargetTreeNodeValue = {
   target: any;
@@ -123,6 +152,9 @@ type ActionThis<
 // proxyTargetId 是 Main 中的 Worker Proxy 应用的数据的唯一标识符
 let currentProxyTargetId = 1;
 
+// dataPromiseId 是通过 this.$post() 发送给 Main 的 Promise 的唯一标识符
+let currentDataPromiseId = 1;
+
 // proxyTargetTreeNodes 中存放 proxy 相关的树节点，数组的索引和 proxyTargetId 对应
 const proxyTargetTreeNodes: Map<
   number,
@@ -150,8 +182,77 @@ function postActionMessage(
   message: MsgFromWorker<"action_data">,
   transfer: Transferable[] = []
 ) {
+  const { data, done, executionId } = message;
+
+  if (data instanceof Promise && !done) {
+    // 当 done 为 false 时，Worker 中需通过对 MessageSource 添加事件监听器回调来获取数据，此时需要在 Main 为 Promise 类型的 data 创建一个对应的 Promise。否则如果 done 为 true，那么 Main 中本身就是通过 Promise 形式来获取 data，就不需要在 Main 中再次创建 Promise 了。
+    const dataPromiseId = currentDataPromiseId;
+
+    const createPromiseMsg: MsgFromWorker<"create_promise"> = {
+      type: "create_promise",
+      executionId,
+      done,
+      dataPromiseId,
+    };
+    postMessage(createPromiseMsg);
+
+    data
+      .then((res) => {
+        try {
+          if (!judgeStructuredCloneable(res)) throw new Error();
+        } catch (error) {
+          // 如果 dataPromise 解析出的值无法被结构化克隆，则需要为它创建 Proxy
+          const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
+            {
+              type: "action_promise_settled",
+              executionId,
+              done,
+              promiseState: "fulfilled",
+              proxyTargetId: currentProxyTargetId,
+              isArray: Array.isArray(res),
+              dataPromiseId,
+            };
+          postMessage(actionPromiseRejectedMsg);
+          proxyTargetTreeNodes.set(
+            currentProxyTargetId,
+            new TreeNode<ProxyTargetTreeNodeValue>({
+              target: res,
+              proxyTargetId: currentProxyTargetId,
+              transfer: [],
+            })
+          );
+          return;
+        }
+        const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
+          {
+            type: "action_promise_settled",
+            executionId,
+            done,
+            promiseState: "fulfilled",
+            data: res,
+            dataPromiseId,
+          };
+        postMessage(actionPromiseRejectedMsg);
+      })
+      .catch((err) => {
+        const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
+          {
+            type: "action_promise_settled",
+            executionId,
+            done,
+            promiseState: "rejected",
+            error: judgeStructuredCloneable(err)
+              ? err
+              : JSON.parse(JSON.stringify(err)),
+            dataPromiseId,
+          };
+        postMessage(actionPromiseRejectedMsg);
+      });
+    currentDataPromiseId++;
+    return;
+  }
   try {
-    if (!judgeStructuredCloneable(message.data))
+    if (!judgeStructuredCloneable(data))
       throw new Error("could not be cloned.");
     postMessage(message, transfer);
   } catch (error: any) {
@@ -172,11 +273,10 @@ function postActionMessage(
         reg2.test(error?.message) ||
         reg2V.test(error?.message)
       ) {
-        const data: any = message.data;
-        const proxyMsg: MsgFromWorker<"port_proxy"> = {
-          type: "port_proxy",
-          executionId: message.executionId,
-          done: message.done,
+        const proxyMsg: MsgFromWorker<"create_rootproxy"> = {
+          type: "create_rootproxy",
+          executionId,
+          done,
           proxyTargetId: currentProxyTargetId,
           isArray: Array.isArray(data),
         };
@@ -197,7 +297,6 @@ function postActionMessage(
     }
     //#endregion
 
-    const { executionId, done } = message;
     const errorMsg: MsgFromWorker<"message_error"> = {
       executionId,
       done,
@@ -236,7 +335,7 @@ function getProxyTargetTreeNode(proxyTargetId: number) {
  * @param adoptiveParentProxyTargetTreeNode
  * @returns
  */
-function postProxyData(
+async function postProxyData(
   proxyTargetId: number,
   getterId: number,
   data: any,
@@ -244,18 +343,45 @@ function postProxyData(
   parentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue> | null,
   adoptiveParentProxyTargetTreeNode?: TreeNode<ProxyTargetTreeNodeValue> | null
 ) {
-  const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
-    type: "proxy_data",
-    proxyTargetId,
-    data,
-    getterId,
-  };
   const transfer = parentProxyTargetTreeNode
     ? parentProxyTargetTreeNode.value.transfer.filter((item) =>
         judgeContainer(data, item)
       )
     : [];
+
+  if (data instanceof Promise) {
+    let resolvedValue: any;
+    try {
+      resolvedValue = await data;
+    } catch (err: any) {
+      const proxyPromiseRejectedMsg: MsgFromWorker<"proxy_promise_rejected"> = {
+        type: "proxy_promise_rejected",
+        proxyTargetId,
+        getterId,
+        error: judgeStructuredCloneable(err)
+          ? err
+          : JSON.parse(JSON.stringify(err)),
+      };
+      postMessage(proxyPromiseRejectedMsg);
+    }
+    postProxyData(
+      proxyTargetId,
+      getterId,
+      resolvedValue,
+      temporaryProxyIdForDepositing,
+      parentProxyTargetTreeNode,
+      adoptiveParentProxyTargetTreeNode
+    );
+    return;
+  }
+
   try {
+    const proxyDataMsg: MsgFromWorker<"proxy_data"> = {
+      type: "proxy_data",
+      proxyTargetId,
+      data,
+      getterId,
+    };
     if (!judgeStructuredCloneable(data))
       throw new Error("could not be cloned.");
     postMessage(proxyDataMsg, transfer);
@@ -407,19 +533,43 @@ export function createOnmessage<A extends CommonActions>(
       };
 
       // postResultWithId 就是 action 中的 this.$end()
-      const postResultWithId: PostMsgWithId = (
+      const postResultWithId: PostMsgWithId = async (
         data?: any,
         transfer: Transferable[] | "auto" = []
       ) => {
-        postActionMessage(
-          {
-            data,
-            executionId,
-            done: true,
-            type: "action_data",
-          },
-          transfer === "auto" ? getTransfers(data) : transfer
-        );
+        if (data instanceof Promise) {
+          try {
+            const resolvedValue = await data;
+            postActionMessage({
+              data: resolvedValue,
+              executionId,
+              done: true,
+              type: "action_data",
+            });
+          } catch (err: any) {
+            const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
+              {
+                type: "action_promise_settled",
+                executionId,
+                done: true,
+                error: judgeStructuredCloneable(err)
+                  ? err
+                  : JSON.parse(JSON.stringify(err)),
+                promiseState: "rejected",
+              };
+            postMessage(actionPromiseRejectedMsg);
+          }
+        } else {
+          postActionMessage(
+            {
+              data,
+              executionId,
+              done: true,
+              type: "action_data",
+            },
+            transfer === "auto" ? getTransfers(data) : transfer
+          );
+        }
       };
 
       const boundActions = { ...actions } as ActionWithThis<A, any>;
@@ -438,28 +588,38 @@ export function createOnmessage<A extends CommonActions>(
 
       const action = actions[actionName];
 
-      try {
-        const data = await action.apply(
-          actionThis as ActionThis<A, GetDataType<A, keyof A>>,
-          payloadList
+      if (action === undefined) {
+        console.warn(
+          actionName
+            ? `"${String(actionName)}" is not a action name.`
+            : `Please provide a valid action name.`
         );
-        if (data !== undefined) {
-          postActionMessage({
-            data,
-            executionId,
-            done: true,
-            type: "action_data",
-          });
-        }
-      } catch (error: any) {
-        if (
-          error.message ===
-          "Cannot read properties of undefined (reading 'apply')"
-        ) {
-          if (actionName)
-            console.warn(`'${String(actionName)}' is not a action name.`);
-        } else {
-          throw error;
+      } else {
+        try {
+          const data = await action.apply(
+            actionThis as ActionThis<A, GetDataType<A, keyof A>>,
+            payloadList
+          );
+          if (data !== undefined) {
+            postActionMessage({
+              data,
+              executionId,
+              done: true,
+              type: "action_data",
+            });
+          }
+        } catch (err: any) {
+          const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
+            {
+              type: "action_promise_settled",
+              executionId,
+              done: true,
+              error: judgeStructuredCloneable(err)
+                ? err
+                : JSON.parse(JSON.stringify(err)),
+              promiseState: "rejected",
+            };
+          postMessage(actionPromiseRejectedMsg);
         }
       }
 
