@@ -141,31 +141,48 @@ export type MsgToWorker<
           ? Pick<MsgToWorkerBasic<T>, "type" | "value">
           : never;
 
-// MsgData 是当接收到 Worker 传递来的 action_data 或 port_proxy 消息后，将其打包处理后的消息
+// MsgData 是当接收到 Worker 传递来的 action_data 或 create_rootproxy 消息后，将其打包处理后的消息
 type MsgData<
   A extends CommonActions,
   D,
-  T extends "message" | "proxy" = "message" | "proxy",
+  T extends "message" | "proxy" | "promise" = "message" | "proxy" | "promise",
 > = {
   readonly actionName: keyof A;
-  readonly isProxy: T extends "proxy" ? true | { isArray: boolean } : false;
 } & (T extends "message"
-  ? { readonly data: D }
+  ? { type: "message"; readonly data: D }
   : T extends "proxy"
-    ? { readonly proxyTargetId: number }
-    : never);
+    ? {
+        type: "proxy";
+        readonly proxyTargetId: number;
+        specificProxy: { isArray: boolean };
+      }
+    : T extends "promise"
+      ? { type: "promise"; readonly dataPromiseId: number }
+      : never);
 
 // ExtendedMsgData 是 MsgData 加工处理后的数据，用于将这些信息合并到 MessageEventX 或 Promise 的结果中
-type ExtendedMsgData<A extends CommonActions, D> = {
+type ExtendedMsgData<
+  A extends CommonActions,
+  D,
+  Occasion extends "promise" | "event" = "promise", // 这个泛型参数是给 ReceivedData 使用的，当使用 promise 或 event 形式获取 received data 时，对最外层的 Promise 对象的处理是不一样的
+> = {
   readonly actionName: keyof A;
-  readonly isProxy: boolean;
-  readonly data: ReceivedData<D>;
-  readonly proxyTargetId: number | undefined;
+  readonly data: ReceivedData<D, Occasion>;
+  readonly proxyTargetId?: number;
+  readonly specificProxy?: { isArray: boolean };
+  readonly dataPromise?: Promise<any>;
+  readonly dataPromiseId?: number;
 };
 
 // 将 Worker 中的 Action 传递的数据的类型 D 转换成 Main 中接收到的数据的类型（如果 D 无法被结构化克隆，则 ReceivedData 会是 Proxy 类型）
-export type ReceivedData<D> =
-  D extends StructuredCloneable<Transferable> ? D : WorkerProxy<D>;
+export type ReceivedData<D, Occasion extends "promise" | "event" = "promise"> =
+  D extends StructuredCloneable<Transferable>
+    ? D
+    : D extends Promise<infer V>
+      ? Occasion extends "event"
+        ? Promise<ReceivedData<V>>
+        : ReceivedData<V>
+      : WorkerProxy<D>;
 
 // 将一个类型中的每一项的类型包装一层 ReceivedData
 type WrapItemsWithReceivedData<T> = {
@@ -318,7 +335,7 @@ type ListenerMap = {
 
 interface MessageEventX<A extends CommonActions, D>
   extends Omit<MessageEvent, "data">,
-    ExtendedMsgData<A, D> {}
+    ExtendedMsgData<A, D, "event"> {}
 
 interface MessageSource<D, A extends CommonActions>
   extends Omit<
@@ -417,6 +434,17 @@ export class WorkerHandler<A extends CommonActions> {
   private registries: Map<number, FinalizationRegistry<any> | undefined> =
     new Map();
   private currentRegistryId = 1;
+
+  // dataPromiseHandlers 中 存放用于控制传递给 MessageSource.addEventListener() 回调中的 promise 的 resolve() 或 reject() 方法
+  private dataPromiseHandlers: Map<
+    number,
+    | {
+        resolve: (value: unknown) => void;
+        reject: (reason?: any) => void;
+        dataPromise: Promise<any> | null;
+      }
+    | undefined
+  > = new Map();
 
   //#endregion
 
@@ -537,23 +565,66 @@ export class WorkerHandler<A extends CommonActions> {
 
     const msgListenerMap: ListenerMap = {
       message: (
-        e: MessageEvent<MsgFromWorker<"action_data" | "port_proxy", D>>
+        e: MessageEvent<
+          MsgFromWorker<
+            | "action_data"
+            | "create_rootproxy"
+            | "create_promise"
+            | "action_promise_settled",
+            D
+          >
+        >
       ) => {
         if (e.data.done || e.data.executionId !== executionId) return;
         if (e.data.type === "action_data") {
           const msgData: MsgData<A, D, "message"> = {
+            type: "message",
             data: e.data.data,
             actionName,
-            isProxy: false,
           };
           sendPort.postMessage(msgData);
-        } else if (e.data.type === "port_proxy") {
+        } else if (e.data.type === "create_rootproxy") {
           const msgData: MsgData<A, D, "proxy"> = {
+            type: "proxy",
             actionName,
-            isProxy: { isArray: e.data.isArray },
+            specificProxy: { isArray: e.data.isArray },
             proxyTargetId: e.data.proxyTargetId,
           };
           sendPort.postMessage(msgData);
+        } else if (e.data.type === "create_promise") {
+          const { dataPromiseId } = e.data as MsgFromWorker<"create_promise">;
+          const dataPromise = new Promise((resolve, reject) => {
+            const dataPromiseHandler = { resolve, reject, dataPromise: null };
+            this.dataPromiseHandlers.set(dataPromiseId, dataPromiseHandler);
+          });
+          this.dataPromiseHandlers.get(dataPromiseId)!.dataPromise =
+            dataPromise;
+          const msgData: MsgData<A, D, "promise"> = {
+            type: "promise",
+            actionName,
+            dataPromiseId,
+          };
+          sendPort.postMessage(msgData);
+        } else if (e.data.type === "action_promise_settled") {
+          const { dataPromiseId } =
+            e.data as MsgFromWorker<"action_promise_settled">;
+          const dataPromiseHandler = this.dataPromiseHandlers.get(
+            dataPromiseId!
+          );
+          if (dataPromiseHandler) {
+            const { resolve, reject } = dataPromiseHandler;
+            if (e.data.promiseState === "fulfilled") {
+              this.dataPromiseHandlers.delete(dataPromiseId!);
+              const { proxyTargetId, isArray } = e.data;
+              const data = proxyTargetId
+                ? this.createProxy(proxyTargetId, "root_proxy", isArray!)
+                : e.data.data;
+              resolve(data);
+            } else {
+              this.dataPromiseHandlers.delete(dataPromiseId!);
+              reject(e.data.error);
+            }
+          }
         }
       },
       messageerror: (e: MessageEvent<MsgFromWorker<"message_error">>) => {
@@ -608,23 +679,34 @@ export class WorkerHandler<A extends CommonActions> {
 
       resultListenerMap = {
         message(
-          e: MessageEvent<MsgFromWorker<"action_data" | "port_proxy", D>>
+          e: MessageEvent<
+            MsgFromWorker<
+              "action_data" | "create_rootproxy" | "action_promise_settled",
+              D
+            >
+          >
         ) {
           if (!e.data.done || e.data.executionId !== executionId) return;
           if (e.data.type === "action_data") {
             const result: MsgData<A, D, "message"> = {
+              type: "message",
               data: e.data.data,
               actionName,
-              isProxy: false,
             };
             resolve(result);
-          } else if (e.data.type === "port_proxy") {
+          } else if (e.data.type === "create_rootproxy") {
             const result: MsgData<A, D, "proxy"> = {
+              type: "proxy",
               actionName,
-              isProxy: { isArray: e.data.isArray },
+              specificProxy: { isArray: e.data.isArray },
               proxyTargetId: e.data.proxyTargetId,
             };
             resolve(result);
+          } else if (
+            e.data.type === "action_promise_settled" &&
+            e.data.promiseState === "rejected"
+          ) {
+            reject(e.data.error);
           }
         },
         messageerror(e: MessageEvent<MsgFromWorker<"message_error", D>>) {
@@ -643,11 +725,8 @@ export class WorkerHandler<A extends CommonActions> {
     });
 
     const newPromise = promise.then((res) => {
-      if (res.isProxy) {
-        let isArray = false;
-        if (typeof res.isProxy === "object") {
-          isArray = res.isProxy.isArray;
-        }
+      if (res.type === "proxy") {
+        const { isArray } = res.specificProxy;
         const msgData = res as MsgData<A, D, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
@@ -707,9 +786,8 @@ export class WorkerHandler<A extends CommonActions> {
         extendedEventTmp[p] = item;
       }
       let extendedEvent: any;
-      if (ev.data.isProxy) {
-        const isArray =
-          typeof ev.data.isProxy === "object" ? ev.data.isProxy.isArray : false;
+      if (ev.data.type === "proxy") {
+        const { isArray } = ev.data.specificProxy;
         const msgData = ev.data as MsgData<A, any, "proxy">;
         const data = this.createProxy(
           msgData.proxyTargetId,
@@ -717,7 +795,14 @@ export class WorkerHandler<A extends CommonActions> {
           isArray
         );
         extendedEvent = { ...extendedEventTmp, ...msgData, data };
-      } else {
+      } else if (ev.data.type === "promise") {
+        const msgData = ev.data as MsgData<A, any, "promise">;
+        const { dataPromiseId } = msgData;
+        const dataPromise =
+          this.dataPromiseHandlers.get(dataPromiseId)?.dataPromise;
+        extendedEvent = { ...extendedEventTmp, ...msgData, data: dataPromise };
+      } else if (ev.data.type === "message") {
+        // 当 ev.data.type 的值为 "promise" 或 "message" 的情况
         const msgData = ev.data as MsgData<A, any, "message">;
         extendedEvent = { ...extendedEventTmp, ...msgData };
       }
@@ -750,7 +835,7 @@ export class WorkerHandler<A extends CommonActions> {
       type: trap === "get" ? "parent" : "adoptiveParent",
     } as const;
 
-    const promise = new Promise((resolve) => {
+    const promise = new Promise((resolve, reject) => {
       const handleProxylistenerMap: ListenerMap = {
         message: (e: MessageEvent<MsgFromWorker>) => {
           if (
@@ -774,6 +859,12 @@ export class WorkerHandler<A extends CommonActions> {
               )
             );
             this.handleListeners(handleProxylistenerMap, false);
+          } else if (
+            e.data.type === "proxy_promise_rejected" &&
+            e.data.proxyTargetId === handleProxyMsg.proxyTargetId &&
+            e.data.getterId === handleProxyMsg.getterId
+          ) {
+            reject(e.data.error);
           }
         },
       };
@@ -975,6 +1066,7 @@ export class WorkerHandler<A extends CommonActions> {
       //#region - promiseProxy
 
       // 当创建的是 Carrier Proxy 时，需要再创建一个 promiseProxy 作为 dataProxy 的 target，使得通过 Carrier Proxy 进行的链式操作的结果是一个类 Promise 对象，可以 resolve 出一个 Worker Proxy 或结构化克隆后的数据
+      // 为什么要创建 promiseProxy 而不直接使用 carriedPromise 来作为 dataProxy 的 target 呢？因为当 dataProxy 使用 apply 或 construct 捕获器时，它的 target 必须是函数，因此必须要创建一个 promiseProxy，它的 target 为 function(){}。
       const proxy = new Proxy(function () {}, {
         get(_, property) {
           if (property in carriedPromise) {
