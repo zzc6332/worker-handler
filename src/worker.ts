@@ -350,9 +350,16 @@ async function postProxyData(
     : [];
 
   if (data instanceof Promise) {
-    let resolvedValue: any;
     try {
-      resolvedValue = await data;
+      const resolvedValue = await data;
+      postProxyData(
+        proxyTargetId,
+        getterId,
+        resolvedValue,
+        temporaryProxyIdForDepositing,
+        parentProxyTargetTreeNode,
+        adoptiveParentProxyTargetTreeNode
+      );
     } catch (err: any) {
       const proxyPromiseRejectedMsg: MsgFromWorker<"proxy_promise_rejected"> = {
         type: "proxy_promise_rejected",
@@ -364,14 +371,6 @@ async function postProxyData(
       };
       postMessage(proxyPromiseRejectedMsg);
     }
-    postProxyData(
-      proxyTargetId,
-      getterId,
-      resolvedValue,
-      temporaryProxyIdForDepositing,
-      parentProxyTargetTreeNode,
-      adoptiveParentProxyTargetTreeNode
-    );
     return;
   }
 

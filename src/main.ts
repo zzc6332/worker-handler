@@ -865,6 +865,7 @@ export class WorkerHandler<A extends CommonActions> {
             e.data.getterId === handleProxyMsg.getterId
           ) {
             reject(e.data.error);
+            this.handleListeners(handleProxylistenerMap, false);
           }
         },
       };
