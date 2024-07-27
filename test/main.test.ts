@@ -9,9 +9,20 @@ import worker, {
   returnUncloneableDataWithOffscreenCanvasExecutor,
   receiveProxyDataExecutor,
   returnUncloneableArrExecutor,
+  returnResolvedPromiseExecutor,
+  returnRejectedPromiseExecutor,
+  postAndEndWithResolvedPromiseExecutor,
+  postAndEndWithRejectedPromiseExecutor,
+  returnResolvedPromiseInObjExecutor,
+  returnRejectedPromiseInObjExecutor,
   // Insert Executors to be imported above this line.
 } from "demo/demo.main";
-import { ProxyObj, UnwrapPromise } from "src/main";
+import {
+  proxyTypeSymbol,
+  ReceivedData,
+  UnwrapPromise,
+  WorkerProxy,
+} from "src/main";
 
 function typeCheck<T>(data: T) {
   return data;
@@ -122,6 +133,7 @@ describe("actions", function () {
     it("event", function () {
       returnUncloneableDataPort = returnUncloneableDataExecutor();
 
+      //  由于该测试用例会在事件监听器回调中执行异步任务，为了让该回调中的所有异步任务执行完毕后再开始下一个测试用例，这里创建一个 Promise 来控制
       return new Promise<void>((resolve, reject) => {
         returnUncloneableDataPort.addEventListener("message", async (e) => {
           const { data } = e;
@@ -199,7 +211,7 @@ describe("actions", function () {
     });
   });
 
-  let dataOfReturnUncloneableDataWithTranserableObj: ProxyObj<{
+  let dataOfReturnUncloneableDataWithTranserableObj: ReceivedData<{
     f: () => void;
     offscreen: OffscreenCanvas;
     imageBitmap: ImageBitmap | null;
@@ -365,7 +377,7 @@ describe("actions", function () {
 
         const popped = await data.pop();
         typeCheck<
-          | ProxyObj<{
+          | ReceivedData<{
               index: number;
               f: () => string;
               layer1: {
@@ -386,6 +398,166 @@ describe("actions", function () {
       });
     });
   });
+  //#endregion
+
+  //#region - Promise
+
+  describe("returnResolvedPromise", function () {
+    let returnResolvedPromisePort: ReturnType<
+      typeof returnResolvedPromiseExecutor
+    >;
+
+    it("event", function () {
+      returnResolvedPromisePort = returnResolvedPromiseExecutor();
+    });
+
+    it("promise", async function () {
+      const { data } = await returnResolvedPromisePort.promise;
+      typeCheck<WorkerProxy<() => string>>(data);
+      expect(data[proxyTypeSymbol]).to.equal("Worker Proxy");
+      expect(await data()).to.equal('test string of "returnResolvedPromise"');
+    });
+  });
+
+  describe("returnRejectedPromise", function () {
+    let returnRejectedPromisePort: ReturnType<
+      typeof returnRejectedPromiseExecutor
+    >;
+
+    it("event", function () {
+      returnRejectedPromisePort = returnRejectedPromiseExecutor();
+    });
+
+    it("promise", async function () {
+      try {
+        await returnRejectedPromisePort.promise;
+      } catch (error: any) {
+        expect(error.message).to.equal(
+          'test string of "returnRejectedPromise"'
+        );
+      }
+    });
+  });
+
+  describe("postAndEndWithResolvedPromise", function () {
+    let postAndEndWithResolvedPromisePort: ReturnType<
+      typeof postAndEndWithResolvedPromiseExecutor
+    >;
+
+    it("event", function () {
+      postAndEndWithResolvedPromisePort =
+        postAndEndWithResolvedPromiseExecutor();
+
+      return new Promise<void>((resolve, reject) => {
+        postAndEndWithResolvedPromisePort.addEventListener(
+          "message",
+          async (e) => {
+            try {
+              const data = await e.data;
+              typeCheck<WorkerProxy<() => string>>(data);
+              expect(data[proxyTypeSymbol]).to.equal("Worker Proxy");
+              expect(await data()).to.equal(
+                'test string of "postAndEndWithResolvedPromise"'
+              );
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          }
+        );
+      });
+    });
+
+    it("promise", async function () {
+      const { data } = await postAndEndWithResolvedPromisePort.promise;
+      typeCheck<WorkerProxy<() => string>>(data);
+      expect(data[proxyTypeSymbol]).to.equal("Worker Proxy");
+      expect(await data()).to.equal(
+        'test string of "postAndEndWithResolvedPromise"'
+      );
+    });
+  });
+
+  describe("postAndEndWithRejectedPromise", function () {
+    let postAndEndWithRejectedPromisePort: ReturnType<
+      typeof postAndEndWithRejectedPromiseExecutor
+    >;
+
+    it("event", function () {
+      postAndEndWithRejectedPromisePort =
+        postAndEndWithRejectedPromiseExecutor();
+      return new Promise<void>((resolve, reject) => {
+        postAndEndWithRejectedPromisePort.addEventListener(
+          "message",
+          async (e) => {
+            try {
+              await e.data;
+            } catch (error: any) {
+              try {
+                expect(error.message).to.equal(
+                  'test string of "postAndEndWithRejectedPromise"'
+                );
+              } catch (error) {
+                reject(error);
+              }
+            }
+            resolve();
+          }
+        );
+      });
+    });
+
+    it("promise", async function () {
+      try {
+        await postAndEndWithRejectedPromisePort.promise;
+      } catch (error: any) {
+        expect(error.message).to.equal(
+          'test string of "postAndEndWithRejectedPromise"'
+        );
+      }
+    });
+  });
+
+  describe("returnResolvedPromiseInObj", function () {
+    let returnResolvedPromiseInObjPort: ReturnType<
+      typeof returnResolvedPromiseInObjExecutor
+    >;
+
+    it("event", function () {
+      returnResolvedPromiseInObjPort = returnResolvedPromiseInObjExecutor();
+    });
+
+    it("promise", async function () {
+      const { data } = await returnResolvedPromiseInObjPort.promise;
+      const promise = await data.promise;
+      typeCheck<WorkerProxy<() => string>>(promise);
+      expect(await promise()).to.equal(
+        'test string of "returnResolvedPromiseInObj"'
+      );
+    });
+  });
+
+  describe("returnRejectedPromiseInObj", function () {
+    let returnRejectedPromiseInObjPort: ReturnType<
+      typeof returnRejectedPromiseInObjExecutor
+    >;
+
+    it("event", function () {
+      returnRejectedPromiseInObjPort = returnRejectedPromiseInObjExecutor();
+    });
+
+    it("promise", async function () {
+      const { data } = await returnRejectedPromiseInObjPort.promise;
+      try {
+        await data.promise;
+      } catch (error: any) {
+        expect(error.message).to.equal(
+          'test string of "returnRejectedPromiseInObj"'
+        );
+      }
+    });
+  });
+
   //#endregion
 
   // Insert test cases above this line.

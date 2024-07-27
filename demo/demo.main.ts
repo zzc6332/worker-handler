@@ -1,4 +1,4 @@
-import { ProxyObj, WorkerHandler } from "src/main";
+import { ReceivedData, WorkerHandler } from "src/main";
 import { DemoActions } from "./demo.worker";
 
 const worker = new WorkerHandler<DemoActions>(
@@ -25,7 +25,7 @@ export const returnUncloneableDataWithOffscreenCanvasExecutor = () =>
   worker.execute("returnUncloneableDataWithOffscreenCanvas");
 
 export const receiveProxyDataExecutor = (
-  data: ProxyObj<{
+  data: ReceivedData<{
     f: () => void;
     offscreen: OffscreenCanvas;
     imageBitmap: ImageBitmap | null;
@@ -34,6 +34,24 @@ export const receiveProxyDataExecutor = (
 
 export const returnUncloneableArrExecutor = () =>
   worker.execute("returnUncloneableArr");
+
+export const returnResolvedPromiseExecutor = () =>
+  worker.execute("returnResolvedPromise");
+
+export const returnRejectedPromiseExecutor = () =>
+  worker.execute("returnRejectedPromise");
+
+export const postAndEndWithResolvedPromiseExecutor = () =>
+  worker.execute("postAndEndWithResolvedPromise");
+
+export const postAndEndWithRejectedPromiseExecutor = () =>
+  worker.execute("postAndEndWithRejectedPromise");
+
+export const returnResolvedPromiseInObjExecutor = () =>
+  worker.execute("returnResolvedPromiseInObj");
+
+export const returnRejectedPromiseInObjExecutor = () =>
+  worker.execute("returnRejectedPromiseInObj");
 
 // Insert Executors above this line
 
