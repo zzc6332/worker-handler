@@ -357,8 +357,8 @@ async function postProxyData(
         getterId,
         resolvedValue,
         temporaryProxyIdForDepositing,
-        parentProxyTargetTreeNode,
-        adoptiveParentProxyTargetTreeNode
+        null,
+        parentProxyTargetTreeNode || adoptiveParentProxyTargetTreeNode // 因目标 promise 而产生的目标数据对应的 Worker Proxy 属于目标 promise 对应的 Worker Proxy 的 adoptedChild，因此无论该目标 promise 是存在 parentProxyTarget 还是 adoptiveParentProxyTarget，它们都作为 resolvedData 的 adoptiveParentProxyTarget
       );
     } catch (err: any) {
       const proxyPromiseRejectedMsg: MsgFromWorker<"proxy_promise_rejected"> = {
