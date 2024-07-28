@@ -546,14 +546,22 @@ export function createOnmessage<A extends CommonActions>(
               type: "action_data",
             });
           } catch (err: any) {
+            let error: any;
+            if (judgeStructuredCloneable(err)) {
+              error = err;
+            } else {
+              try {
+                error = JSON.parse(JSON.stringify(err));
+              } catch (e) {
+                error = new Error(err).message;
+              }
+            }
             const actionPromiseRejectedMsg: MsgFromWorker<"action_promise_settled"> =
               {
                 type: "action_promise_settled",
                 executionId,
                 done: true,
-                error: judgeStructuredCloneable(err)
-                  ? err
-                  : JSON.parse(JSON.stringify(err)),
+                error,
                 promiseState: "rejected",
               };
             postMessage(actionPromiseRejectedMsg);
