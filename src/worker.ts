@@ -564,7 +564,10 @@ export function createOnmessage<A extends CommonActions>(
                 error,
                 promiseState: "rejected",
               };
-            postMessage(actionPromiseRejectedMsg);
+            // 为了避免一些极端情况下的出现的非预期情况，比如在 Action 中同步地使用 this.$post() 和 this.$end() 发送同一个会立马被 reject 的 Promise 对象，使得这里的 this.$end() 对应的 postMessage() 的调用会会早于 this.$post() 对应的 postMessage()，使得 Main 中由于先接受到了终止消息，而提前关闭了非终止消息的接收通道造成的消息丢失，所以这里异步地执行 postMessage()，保证它的执行晚于非终止消息的 postMessage()
+            setTimeout(() => {
+              postMessage(actionPromiseRejectedMsg);
+            });
           }
         } else {
           postActionMessage(

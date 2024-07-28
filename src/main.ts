@@ -614,15 +614,20 @@ export class WorkerHandler<A extends CommonActions> {
           if (dataPromiseHandler) {
             const { resolve, reject } = dataPromiseHandler;
             if (e.data.promiseState === "fulfilled") {
-              this.dataPromiseHandlers.delete(dataPromiseId!);
               const { proxyTargetId, isArray } = e.data;
               const data = proxyTargetId
                 ? this.createProxy(proxyTargetId, "root_proxy", isArray!)
                 : e.data.data;
               resolve(data);
+              setTimeout(() => {
+                // 在极端情况下，比如在 Action 中同步地使用 this.$post() 和 this.$end() 发送同一个会立马被 resolve 的 Promise 对象，使得通过 this.$post() 发送的代理 Promise 对象的引用有可能会在被获取到前就被 delete 了，因此这里的 delete 操作需要异步进行
+                this.dataPromiseHandlers.delete(dataPromiseId!);
+              });
             } else {
-              this.dataPromiseHandlers.delete(dataPromiseId!);
               reject(e.data.error);
+              setTimeout(() => {
+                this.dataPromiseHandlers.delete(dataPromiseId!);
+              });
             }
           }
         }
@@ -743,8 +748,9 @@ export class WorkerHandler<A extends CommonActions> {
       // 当一个 action 从 Worker 获取到 result 响应（终止消息）时清除副作用，由于此时已经不需要再从 Worker 接收 响应消息了，因此可以立马将 resultListenerMap 和 msgListenerMap 中的监听器全部移除
       this.handleListeners(resultListenerMap, false);
       this.handleListeners(msgListenerMap, false);
+      // readyState 的改变是需要立马生效的，所以不在定时器中执行
       readyState.current = 2;
-      // 但是在 promise 被 resolve 之前的一瞬间，如果 action 从 Worker 获取到了 msg 响应（非终止消息），那么还此时需要使用 messageChannel 来将响应传递给 messageSource，因此关闭 messageChannel 中的 port 的操作异步执行
+      // 在 promise 被 resolve 之前的一瞬间，如果此时 action 从 Worker 获取到了 msg 响应（非终止消息），那么还此时需要使用 messageChannel 来将响应传递给 messageSource，因此关闭 messageChannel 中的 port 的操作需要异步执行
       setTimeout(() => {
         messageChannel.port1.close();
         messageChannel.port2.close();
