@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
+    "strictNullChecks": true,
     "lib": [
       "ESNext",
       "WebWorker",
@@ -16,7 +17,11 @@
     "baseUrl": ".",
     "outDir": "./dist/release",
     "declaration": true,
-    "declarationDir": "./dist/release"
+    "declarationDir": "./dist/release",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src"
