@@ -141,7 +141,7 @@ Responding through `Promise` is suitable for situations where one request corres
 
 Responding through `EventTarget` is suitable for situations where one request will recieve multiple responses.
 
-### Responding through `Promise` (`terminating responses`)
+### <span id="terminating">Responding through `Promise` (`terminating responses`)</span>
 
 In `Actions`, you can respond to messages through `Promise` either by using return value of the `Action` or by calling `this.$end()`.
 
@@ -547,18 +547,18 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-
+  
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-
+  
   async function init() {
     const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-
+  
     const actualArr = await proxyArr.map((item) => item);
     console.log(actualArr); //  [Worker Proxy, Worker Proxy, Worker Proxy]
-
+  
     // Since `actualArr` is an actual array, it has a regular iterator interface and can be iterated using the `for...of` statement.
     for (const item of actualArr) {
       console.log(await item.index);
@@ -570,7 +570,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // "Iteration executed by `for...of` is completed!"
     // --- The console output is as above. ---
-
+  
     // Note that when using `forEach()` to iterate over an actual array, if the callback function passed in is an asynchronous function, it will not wait for the asynchronous operations in the callback to complete.
     actualArr.forEach(async (item) => {
       console.log(await item.index);
@@ -583,7 +583,7 @@ onmessage = createOnmessage<DemoActions>({
     // 2
     // --- The console output is as above. ---
   }
-
+  
   init();
   ~~~
 
@@ -593,21 +593,21 @@ onmessage = createOnmessage<DemoActions>({
   // demo.main.ts
   import { WorkerHandler } from "worker-handler/main";
   import { DemoActions } from "./demo.worker";
-
+  
   const demoWorker = new WorkerHandler<DemoActions>(
     new Worker(new URL("./demo.worker.ts", import.meta.url))
   );
-
+  
   async function init() {
     const { data: proxyArr } = await demoWorker.execute("returnUncloneableArr")
       .promise;
-
+  
     // Remove an item from the head of `ogArr`.
     console.log(await proxyArr.length); // 3
     const shifted = await proxyArr.shift();
     if (shifted) console.log(await shifted?.index); // 0
     console.log(await proxyArr.length); // 2
-
+  
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -615,10 +615,10 @@ onmessage = createOnmessage<DemoActions>({
     // 1
     // 2
     // --- The console output is as above. ---
-
+  
     // Insert an item at the tail of `ogArr`.
     if (shifted) console.log(await proxyArr.push(shifted)); // 3
-
+  
     for await (const item of proxyArr) {
       console.log(await item.index);
     }
@@ -628,7 +628,7 @@ onmessage = createOnmessage<DemoActions>({
     // 0
     // --- The console output is as above. ---
   }
-
+  
   init();
   ~~~
 
@@ -654,7 +654,9 @@ The relationships between `Worker Proxy` objects:
 
 The `Worker Array Proxy` is a special type of `Worker Proxy`. If a `Worker Proxy` references target data that is an array, then it is a `Worker Array Proxy`. It can execute array methods, and its other behaviors are the same as a regular `Worker Proxy`.
 
-The `Carrier Proxy` is a promise-like object. Since operations on a `Worker Proxy` need to asynchronously take effect on the target data in `Worker` that it references, a carrier is needed to asynchronously obtain the result of the operation. The `Carrier Proxy` serves as this carrier. An operation on a `Worker Proxy` returns a `Carrier Proxy`, and the result of the operation is obtained asynchronously through this promise-like object. If further operations are performed on the `Carrier Proxy`, a new `Carrier Proxy` is also returned, enabling chain operations on the `Worker Proxy`.
+The <span id="Carrier_Proxy">`Carrier Proxy`</span> is a promise-like object. Since operations on a `Worker Proxy` need to asynchronously take effect on the target data in `Worker` that it references, a carrier is needed to asynchronously obtain the result of the operation. The `Carrier Proxy` serves as this carrier. An operation on a `Worker Proxy` returns a `Carrier Proxy`, and the result of the operation is obtained asynchronously through this promise-like object. If further operations are performed on the `Carrier Proxy`, a new `Carrier Proxy` is also returned, enabling chain operations on the `Worker Proxy`.
+
+If an operation on a `Worker Proxy` takes effect on its target data and results in a `Promise` object, the corresponding `Carrier Proxy` will simulate the behavior of this `Promise` object. See the <a href="#Carrier_Promise_Proxy" target="_self">example</a>.
 
 By accessing the <span id="proxyTypeSymbol">`proxyTypeSymbol`</span> key of the `Worker Proxy` related object, you can obtain a string that represents the type of this object:
 
@@ -883,6 +885,299 @@ If the target data of a `Worker Proxy` is responded to by `this.$post()` in an `
 
 - Do not call `addEventListener()` multiple times on a single `MessageSource`. Otherwise, multiple `Worker Proxies` will be created for the same target data. As any one of these `Worker Proxies` is revoked (or garbage collected), the target data will be cleaned up and will no longer be accessible to the other `Worker Proxies` that reference it.
 
+## <span id="Promise_Object_Message">Promise Object Messages</span>
+
+The `Promise` object messages described in this chapter do not refer to <a href="#terminating" target="_self">messages responded through Promise (terminating responses)</a>, but rather to messages which have a `Promise` object as their target data.
+
+Starting from `v0.2.5`, support for `Promise` object messages has been added, allowing `Main` to intuitively handle `Promise` objects from `Worker`.
+
+The generation of `Promise` object messages can be broadly categorized into the following three cases:
+
+- Directly responding with a `Promise` object through a `terminating response`;
+- Directly responding with a `Promise` object through a `nonterminating response`;
+- Manipulating the `Promise` object in the target data through a `Worker Proxy`.
+
+### Promise Object Messages In Terminating Responses
+
+If a `Promise` object is posted through a `terminating response` in `Action`, the corresponding `MessageSource.promise` in `Main` will simulate the behavior of that `Promise` object.
+
+If the value that the `Promise` object to be resolved with cannot be structured cloned, the `MessageSource.promise` will be resolved with a `Worker Proxy` that references that value.
+
+For example:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnPromiseWithStr: () => ActionResult<Promise<string>>;
+  returnPromiseWithFn: () => ActionResult<Promise<() => string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnPromiseWithStr() {
+    this.$end(
+      new Promise<string>((resolve, reject) => {
+        if (Math.random() >= 0.5) {
+          resolve('fulfilled test string of "returnPromiseWithStr"');
+        } else {
+          reject('rejected test string of "returnPromiseWithStr"');
+        }
+      })
+    );
+  },
+
+  async returnPromiseWithFn() {
+    this.$end(
+      new Promise<() => string>((resolve, reject) => {
+        if (Math.random() >= 0.5) {
+          resolve(() => 'fulfilled test string of "returnPromiseWithFn"');
+        } else {
+          reject('rejected test string of "returnPromiseWithFn"');
+        }
+      })
+    );
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  try {
+    const { data } = await demoWorker.execute("returnPromiseWithStr").promise;
+    // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can be structured cloned, then the value can be directly obtained.
+    console.log(data); // 'fulfilled test string of "returnPromiseWithStr"'
+  } catch (error) {
+    // In the case where the target Promise object is rejected.
+    console.log(error); // 'rejected test string of "returnPromiseWithStr"'
+  }
+
+  try {
+    const { data } = await worker .execute("returnPromiseWithFn").promise;
+    // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can not be structured cloned, then a Worker Proxy referencing the value will be obtained.
+    console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+    console.log(await data()); // 'fulfilled test string of "returnPromiseWithFn"'
+  } catch (error) {
+    // In the case where the target Promise object is rejected.
+    console.log(error); // 'rejected test string of "returnPromiseWithFn"'
+  }
+}
+
+init();
+~~~
+
+If you use the return value of `Action` to respond with a `Promise` object, you need to explicitly annotate the return value type when defining the `Action` function:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnPromiseWithStr: () => ActionResult<Promise<string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  // Explicitly annotate the return type of Action, which needs to match the type in DemoActions
+  async returnPromiseWithStr(): ActionResult<Promise<string>> {
+    return new Promise<string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve('fulfilled test string of "returnPromiseWithStr"');
+      } else {
+        reject('rejected test string of "returnPromiseWithStr"');
+      }
+    });
+  }
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  try {
+    const { data } = await demoWorker.execute("returnPromiseWithStr").promise;
+     // In the case where the target Promise object is fulfilled
+    console.log(data); // 'fulfilled test string of "returnPromiseWithStr"'
+  } catch (error) {
+     // In the case where the target Promise object is rejected
+    console.log(error); // 'rejected test string of "returnPromiseWithStr"'
+  }
+}
+
+init();
+~~~
+
+### Promise Object Messages In Nonterminating Responses
+
+If a `Promise` object is posted through a `nonterminating response` in `Action`, a simulated `Promise` object can be obtained in `Main` by listening to the corresponding `MessageSource`.
+
+If the value that the `Promise` object to be resolved with cannot be structured cloned, the `MessageSource.promise` will be resolved with a `Worker Proxy` that references that value.
+
+For exampler:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  postPromiseWithStr: () => ActionResult<Promise<string>>;
+  postPromiseWithFn: () => ActionResult<Promise<() => string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async postPromiseWithStr() {
+    const promise = new Promise<string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve('fulfilled test string of "postPromiseWithStr"');
+      } else {
+        reject('rejected test string of "postPromiseWithStr"');
+      }
+    });
+    this.$post(promise);
+    this.$end(promise);
+  },
+
+  async postPromiseWithFn() {
+    const promise = new Promise<() => string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve(() => 'fulfilled test string of "postPromiseWithFn"');
+      } else {
+        reject('rejected test string of "postPromiseWithFn"');
+      }
+    });
+    this.$post(promise);
+    this.$end(promise);
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const messageSource1 = worker.execute("postPromiseWithStr");
+  messageSource1.addEventListener("message", async (e) => {
+    try {
+      // e.data is a Promise object that will simulate the target Promise object.
+      const resolvedValue = await e.data;
+      // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can be structured cloned, then the value can be directly obtained.
+      console.log(resolvedValue); // 'fulfilled test string of "postPromiseWithStr"'
+    } catch (error) {
+      // In the case where the target Promise object is rejected.
+      console.log(error); // 'rejected test string of "postPromiseWithStr"'
+    }
+  });
+  try {
+    const { data } = await messageSource1.promise;
+    // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can be structured cloned, then the value can be directly obtained.
+    console.log(data); // 'fulfilled test string of "postPromiseWithStr"'
+  } catch (error) {
+    // In the case where the target Promise object is rejected.
+    console.log(error); // 'rejected test string of "postPromiseWithStr"'
+  }
+
+  const messageSource2 = worker.execute("postPromiseWithFn");
+  messageSource2.addEventListener("message", async (e) => {
+    try {
+      // e.data is a Promise object that will simulate the target Promise object.
+      const data = await e.data;
+      // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can be structured cloned, then the value can be directly obtained.
+      console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+      const resultStr = await data();
+      console.log(resultStr); // 'fulfilled test string of "returnPromiseWithFn"'
+    } catch (error) {
+      // In the case where the target Promise object is rejected.
+      console.log(error); //  // 'rejected test string of "returnPromiseWithFn"'
+    }
+  });
+  try {
+    const { data } = await messageSource2.promise;
+    // In the case where the target Promise object is fulfilled, if the value which the target Promise object resolved with can be structured cloned, then the value can be directly obtained.
+    console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+    console.log(await data()); // 'fulfilled test string of "returnPromiseWithFn"'
+  } catch (error) {
+    // In the case where the target Promise object is rejected.
+    console.log(error); // 'rejected test string of "returnPromiseWithFn"'
+  }
+}
+
+init();
+~~~
+
+### Promise Object Messages In Worker Proxies
+
+If the `Worker Proxy` references target data that contains (or can generate) `Promise` objects, then when attempting to access the `Promise` objects through the `Worker Proxy`, you will get a <a href="#Carrier_Proxy" target="_self">Carrier Proxy</a> that references the `Promise` object. This `Carrier Proxy` will simulate the behavior of the `Promise` object. For <span id="Carrier_Promise_Proxy">example</span>:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  getPromise: () => ActionResult<{ getPromise: () => Promise<string> }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async getPromise() {
+    this.$end({
+      getPromise: () =>
+        new Promise<string>((resolve, reject) => {
+          if (Math.random() >= 0.5) {
+            resolve('fulfilled test string of "getPromise"');
+          } else {
+            reject('rejected test string of "getPromise"');
+          }
+        }),
+    });
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await worker.execute("getPromise").promise;
+  try {
+    // `data.getPromise()` will generate a Carrier Proxy that references the target Promise object, the Carrier Proxy will simulate the target Promise object.
+    console.log(data.getPromise()[proxyTypeSymbol]); // "Carrier Proxy"
+    const resolvedValue = await data.getPromise();
+    // In the case where the target Promise object is fulfilled.
+    console.log(resolvedValue); // 'fulfilled test string of "getPromise"'
+  } catch (error) {
+    // In the case where the target Promise object is rejected.
+    console.log(error); // 'rejected test string of "getPromise"'
+  }
+}
+
+init();
+~~~
+
 ## APIs
 
 ### worker-handler/main
@@ -975,17 +1270,17 @@ Properties:
 
   If an error is thrown in `Action` or the `terminating response` message made by `Action` cannot be structured cloned, and the current environment does not support `Proxy`, the `promise` will become `rejected` and receive the error message.
 
-  When the `promise` is settled, the connection is closed, and `Action` will not make any more response messages (including `non-terminating response` messages).
+  When the `promise` is settled, the connection is closed, and `Action` will not make any more response messages (including `nonterminating response` messages).
 
 - `onmessage`:
 
-  A callback function that is called when `Action` makes a `non-terminating response` message.
+  A callback function that is called when `Action` makes a `nonterminating response` message.
 
-  It receives a parameter `e`, through which the `non-terminating response` message made by `Action` can be accessed via `e.data`.
+  It receives a parameter `e`, through which the `nonterminating response` message made by `Action` can be accessed via `e.data`.
 
 - `onmessageerror`:
 
-  A callback function that is called when the `non-terminating response` message made by `Action` cannot be structured cloned  and the current environment does not support `Proxy`.
+  A callback function that is called when the `nonterminating response` message made by `Action` cannot be structured cloned  and the current environment does not support `Proxy`.
 
   In `typescript`, this situation is usually detected during type checking, so there is generally no need to listen for the `messageerror` event.
 
@@ -1033,7 +1328,7 @@ In `worker-handler/main`, some `symbol` keys are provided. They can be used to a
 
 Define `Actions` within an object, which is passed to the `createOnmessage()` when called, and return a listener function for the `message` event of `Worker`.
 
-Use `this.$post()` within `Action` to make `non-terminating responses`, and use `this.$end()` or return a value to make `terminating responses`.
+Use `this.$post()` within `Action` to make `nonterminating responses`, and use `this.$end()` or return a value to make `terminating responses`.
 
 #### ActionResult
 
@@ -1067,3 +1362,7 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
 ### `v0.2.4`
 
 - <a href="#cleanup" target="_self">Supports cleaning up the target data referenced by the Worker Proxy that is no longer in use.</a>
+
+### `v0.2.5`
+
+- <a href="#Promise_Object_Message" target="_self">Supports Promise Object Message feature.</a>

@@ -137,7 +137,7 @@ demoWorker.execute("pingLater", null, 1000).promise.then((res) => {
 
 `EventTarget` 形式的消息响应适用于一次请求会得到多条响应的情况。
 
-### Promise 形式（终止响应）
+### <span id="terminating">Promise 形式（终止响应）</span>
 
 `Action` 中可以用函数返回值，或调用 `this.$end()` 这两种方式以 `Promise` 形式响应消息。
 
@@ -662,7 +662,9 @@ onmessage = createOnmessage<DemoActions>({
 
 `Worker Array Proxy` 是一种特殊的 `Worker Proxy`。如果一个 `Worker Proxy` 引用的目标数据是一个数组，那么它就是一个 `Worker Array Proxy`。它可以执行数组方法，其余行为与普通的 `Worker Proxy` 相同。
 
-`Carrier Proxy` 是一个类 `Promise` 对象。由于对 `Worker Proxy` 的操作需要异步地生效到它引用的 `Worker` 中的目标数据上，因此需要一个载体去异步获取操作结果。`Carrier Proxy` 就是这个载体，对一个 `Worker Proxy` 的操作会返回一个 `Carrier Proxy`，操作的结果通过这个类 `Promise` 对象异步获得。如果对 `Carrier Proxy` 继续操作，同样也会返回一个新的 `Carrier Proxy`，这使得 `Worker Proxy` 可以进行链式操作。
+<span id="Carrier_Proxy">`Carrier Proxy`</span> 是一个类 `Promise` 对象。由于对 `Worker Proxy` 的操作需要异步地生效到它引用的 `Worker` 中的目标数据上，因此需要一个载体去异步获取操作结果。`Carrier Proxy` 就是这个载体，对一个 `Worker Proxy` 的操作会返回一个 `Carrier Proxy`，操作的结果通过这个类 `Promise` 对象异步获得。如果对 `Carrier Proxy` 继续操作，同样也会返回一个新的 `Carrier Proxy`，这使得 `Worker Proxy` 可以进行链式操作。
+
+如果对一个 `Worker Proxy` 的操作生效到其目标数据上时，其结果是一个 `Promise` 对象，那么对应的 `Carrier Proxy` 将会模拟这个 `Promise` 对象的行为，见<a href="#Carrier_Promise_Proxy" target="_self">示例</a>。
 
 通过访问 `Worker Proxy` 相关对象的 <span id="proxyTypeSymbol">`proxyTypeSymbol`</span> 键可以得到表示该 `Worker Proxy` 相关对象的类型的字符串：
 
@@ -892,6 +894,299 @@ init(); // 等同于 init(0); 或 init(false); 或 init({ derived: false });
 
 - 不要对一个 `MessageSource` 多次调用 `addEventListener()`。否则会为同一个目标数据创建多个 `Worker Proxy`。随着其中任意一个 `Worker Proxy` 被废除（或被垃圾回收），该目标数据就会被清理而无法再被其它一同引用它的 `Worker Proxy` 访问到。
 
+## <span id="Promise_Object_Message">Promise 对象消息</span>
+
+本章描述的 `Promise` 对象消息并不是指 <a href="#terminating" target="_self">Promise 形式的消息响应（中止响应）</a>，而是指目标数据是 `Promise` 对象的消息。
+
+从 `v0.2.5` 开始支持 `Promise` 对象消息，使得 `Main` 中可以直观地处理 `Worker` 中的 `Promise` 对象。
+
+`Promise` 对象消息的产生大致分为以下三种情形：
+
+- 通过终止响应直接响应一个 `Promise` 对象；
+- 通过非终止响应直接响应一个 `Promise` 对象；
+- 通过 `Worker Proxy` 操作其目标数据中的 `Promise` 对象。
+
+### 终止响应中的 Promise 对象消息
+
+如果在 `Action` 中通过终止响应发送一个 `Promise` 对象，那么在 `Main` 中对应的 `MessageSource.promise` 会模拟该 `Promise` 对象的行为。
+
+如果该 `Promise` 对象解析出的值无法被结构化克隆，那么在 `MessageSource.promise` 中会解析出一个引用了该值的 `Worker Proxy`。
+
+示例：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnPromiseWithStr: () => ActionResult<Promise<string>>;
+  returnPromiseWithFn: () => ActionResult<Promise<() => string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async returnPromiseWithStr() {
+    this.$end(
+      new Promise<string>((resolve, reject) => {
+        if (Math.random() >= 0.5) {
+          resolve('fulfilled test string of "returnPromiseWithStr"');
+        } else {
+          reject('rejected test string of "returnPromiseWithStr"');
+        }
+      })
+    );
+  },
+
+  async returnPromiseWithFn() {
+    this.$end(
+      new Promise<() => string>((resolve, reject) => {
+        if (Math.random() >= 0.5) {
+          resolve(() => 'fulfilled test string of "returnPromiseWithFn"');
+        } else {
+          reject('rejected test string of "returnPromiseWithFn"');
+        }
+      })
+    );
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  try {
+    const { data } = await demoWorker.execute("returnPromiseWithStr").promise;
+    // 目标 Promise 对象变为 fulfilled 的情况，如果目标 Promise 对象解析出的值可以被结构化克隆，则可以直接得到该值
+    console.log(data); // 'fulfilled test string of "returnPromiseWithStr"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "returnPromiseWithStr"'
+  }
+
+  try {
+    const { data } = await worker.execute("returnPromiseWithFn").promise;
+    // 目标 Promise 对象变为 fulfilled 的情况，如果目标 Promise 对象解析出的值无法被结构化克隆，则会的得到一个引用了改值的 Worker Proxy
+    console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+    console.log(await data()); // 'fulfilled test string of "returnPromiseWithFn"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "returnPromiseWithFn"'
+  }
+}
+
+init();
+~~~
+
+如果使用 `Action` 的返回值来响应一个 `Promise` 对象，则需要在定义 `Action` 函数时显式指定返回值类型：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  returnPromiseWithStr: () => ActionResult<Promise<string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  // 为 Action 显式指定返回值类型，需要与 DemoActions 中的类型相匹配
+  async returnPromiseWithStr(): ActionResult<Promise<string>> {
+    return new Promise<string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve('fulfilled test string of "returnPromiseWithStr"');
+      } else {
+        reject('rejected test string of "returnPromiseWithStr"');
+      }
+    });
+  }
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  try {
+    const { data } = await demoWorker.execute("returnPromiseWithStr").promise;
+    // 目标 Promise 对象变为 fulfilled 的情况
+    console.log(data); // 'fulfilled test string of "returnPromiseWithStr"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "returnPromiseWithStr"'
+  }
+}
+
+init();
+~~~
+
+### 非终止响应中的 Promise 对象消息
+
+如果在 `Action` 中通过非终止响应发送一个 `Promise` 对象，那么在 `Main` 中通过监听对应的 `MessageSource` 可以得到一个模拟该 `Promise` 对象的 `Promise` 对象。
+
+如果该 `Promise` 对象解析出的值无法被结构化克隆，那么在 `MessageSource.promise` 中会解析出一个引用了该值的 `Worker Proxy`。
+
+示例：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  postPromiseWithStr: () => ActionResult<Promise<string>>;
+  postPromiseWithFn: () => ActionResult<Promise<() => string>>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async postPromiseWithStr() {
+    const promise = new Promise<string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve('fulfilled test string of "postPromiseWithStr"');
+      } else {
+        reject('rejected test string of "postPromiseWithStr"');
+      }
+    });
+    this.$post(promise);
+    this.$end(promise);
+  },
+
+  async postPromiseWithFn() {
+    const promise = new Promise<() => string>((resolve, reject) => {
+      if (Math.random() >= 0.5) {
+        resolve(() => 'fulfilled test string of "postPromiseWithFn"');
+      } else {
+        reject('rejected test string of "postPromiseWithFn"');
+      }
+    });
+    this.$post(promise);
+    this.$end(promise);
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const messageSource1 = worker.execute("postPromiseWithStr");
+  messageSource1.addEventListener("message", async (e) => {
+    try {
+      // e.data 是一个 Promise 对象，它会模拟目标 Promise 对象
+      const resolvedValue = await e.data;
+      // 目标 Promise 对象变为 fulfilled 的情况，如果目标 Promise 对象解析出的值可以被结构化克隆，则可以直接得到该值
+      console.log(resolvedValue); // 'fulfilled test string of "postPromiseWithStr"'
+    } catch (error) {
+      // 目标 Promise 对象变为 rejected 的情况
+      console.log(error); // 'rejected test string of "postPromiseWithStr"'
+    }
+  });
+  try {
+    const { data } = await messageSource1.promise;
+    // 目标 Promise 对象变为 fulfilled 的情况，如果目标 Promise 对象解析出的值可以被结构化克隆，则可以直接得到该值
+    console.log(data); // 'fulfilled test string of "postPromiseWithStr"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "postPromiseWithStr"'
+  }
+
+  const messageSource2 = worker.execute("postPromiseWithFn");
+  messageSource2.addEventListener("message", async (e) => {
+    try {
+      // e.data 是一个 Promise 对象，它会模拟目标 Promise 对象
+      const data = await e.data;
+      // 目标 Promise 对象变为 fulfilled 的情况,，如果目标 Promise 对象解析出的值无法被结构化克隆，则会解析出一个 Worker Proxy
+      console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+      const resultStr = await data();
+      console.log(resultStr); // 'fulfilled test string of "returnPromiseWithFn"'
+    } catch (error) {
+      // 目标 Promise 对象变为 fulfilled 的情况
+      console.log(error); //  // 'rejected test string of "returnPromiseWithFn"'
+    }
+  });
+  try {
+    const { data } = await messageSource2.promise;
+    // 目标 Promise 对象变为 fulfilled 的情况，如果目标 Promise 对象解析出的值无法被结构化克隆，则会解析出一个 Worker Proxy
+    console.log(data[proxyTypeSymbol]); // "Worker Proxy"
+    console.log(await data()); // 'fulfilled test string of "returnPromiseWithFn"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "returnPromiseWithFn"'
+  }
+}
+
+init();
+~~~
+
+### Worker Proxy 中的 Promise 对象消息
+
+如果 `Worker Proxy` 引用的目标数据中包含（或可以产生）`Promise` 对象，那么当尝试通过该 `Worker Proxy` 访问该 `Promise` 对象时，会得到一个引用了该 `Promise` 对象的 <a href="#Carrier_Proxy" target="_self">Carrier Proxy</a>，该 `Carrier Proxy` 会模拟该 `Promise` 对象的行为。<span id="Carrier_Promise_Proxy">示例</span>：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  getPromise: () => ActionResult<{ getPromise: () => Promise<string> }>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async getPromise() {
+    this.$end({
+      getPromise: () =>
+        new Promise<string>((resolve, reject) => {
+          if (Math.random() >= 0.5) {
+            resolve('fulfilled test string of "getPromise"');
+          } else {
+            reject('rejected test string of "getPromise"');
+          }
+        }),
+    });
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { proxyTypeSymbol, WorkerHandler } from "src/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+async function init() {
+  const { data } = await worker.execute("getPromise").promise;
+  try {
+    // data.getPromise() 会产生一个引用了目标 Promise 对象的 Carrier Proxy，它会模拟该 Promise 对象
+    console.log(data.getPromise()[proxyTypeSymbol]); // "Carrier Proxy"
+    const resolvedValue = await data.getPromise();
+    // 目标 Promise 对象变为 fulfilled 的情况
+    console.log(resolvedValue); // 'fulfilled test string of "getPromise"'
+  } catch (error) {
+    // 目标 Promise 对象变为 rejected 的情况
+    console.log(error); // 'rejected test string of "getPromise"'
+  }
+}
+
+init();
+~~~
+
 ## APIs
 
 ### worker-handler/main
@@ -1076,3 +1371,7 @@ init(); // 等同于 init(0); 或 init(false); 或 init({ derived: false });
 ### `v0.2.4`
 
 - <a href="#cleanup" target="_self">支持清理不再使用的 Worker Proxy 所引用的目标数据。</a>
+
+### `v0.2.5`
+
+- <a href="#Promise_Object_Message" target="_self">支持 Promise 对象消息特性。</a>
