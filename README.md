@@ -4,7 +4,7 @@
     <span style="font-weight:bold;">English</span> | <a href="./README-zh_CN.md">简体中文</a>
 </div>
 
-## OvewrView
+## Overview
 
 `Worker-handler` provides a convenient capability for posting messages between the `Main` thread and the `Worker` thread when using `Web Worker` in javascript or typescript.
 
@@ -43,11 +43,11 @@ onmessage = createOnmessage({
 import { WorkerHandler } from "worker-handler"; // It can also be imported from "worker-handler/main".
 
 // import workerUrl from "./demo.worker.js?worker&url"; // in vite
-// import workerInstance from "./demo.worker.js?worker"; // in vite
 
 const demoWorker = new WorkerHandler(
-  // In Vite, workerUrl or workerInstance can also be used as the parameter.
+  // Pass an instance of Worker as the first argument.
   new Worker(new URL("./demo.worker.js", import.meta.url)) // In webpack5, create an instance of Worker in this way.
+  // In Vite, you can pass the above `workerUrl`, WorkerHandler will convert it into an instance of Worker.
 );
 
 // Request `Worker` to execute someAction.
@@ -62,7 +62,7 @@ demoWorker.execute("someAction", []).promise.then((res) => {
 
 ## Typescript
 
-`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and reveiving ends when passing messages between `Main` and `Worker`.
+`Worker-handler` can be used with type supports in typescript. Once the type of `Action` is defined, it enables type detections and hints at both the posting and receiving ends when passing messages between `Main` and `Worker`.
 
 <span id="ts-example">The following is a simple example of using `worker-handler` in typescript:</span>
 
@@ -73,7 +73,7 @@ import { ActionResult, createOnmessage } from "worker-handler-test/worker";
 /*
  * Define the types for `Actions`, which will subsequently be passed as generic parameters in two places:
  * - When using `createOnmessage()` in `Worker`.
- * - When using `new WorkerHandler()`` in `Main`.
+ * - When using `new WorkerHandler()` in `Main`.
 */
 export type DemoActions = {
   // Define an `Action` named `pingLater`, whose return type `ActionResult<string>` indicates that this `Action` can pass a message of string type to Main.

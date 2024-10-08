@@ -43,11 +43,11 @@ onmessage = createOnmessage({
 import { WorkerHandler } from "worker-handler"; // 也可以从 "worker-handler/main" 中引入
 
 // import workerUrl from "./demo.worker.js?worker&url"; // in vite
-// import workerInstance from "./demo.worker.js?worker"; // in vite
 
 const demoWorker = new WorkerHandler(
-  // 如果是在 vite 环境中，可以传入上面的 workerUrl 或 workerInstance
+  // 传入一个 Worker 实例作为第一个参数
   new Worker(new URL("./demo.worker.js", import.meta.url)) // webpack5 环境中以这种方式创建 Worker 实例
+  // 如果是在 vite 环境中，可以传入上面的 workerUrl，WorkerHandler 会将其转换为 Worker 实例
 );
 
 // 请求 Worker 执行 someAction
