@@ -287,7 +287,7 @@ type ArrWithRewrittenMethods<T, A = ArrWithoutIterator<T>> = {
 
 interface ArrWithAsyncIterator<T>
   extends Omit<ArrWithRewrittenMethods<T>, "length"> {
-  [Symbol.asyncIterator](): AsyncIterableIterator<ProxyData<T>>;
+  [Symbol.asyncIterator](): AsyncIterableIterator<WorkerProxy<T>>;
   length: PromiseLike<number>;
 }
 
