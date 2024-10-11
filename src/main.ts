@@ -227,7 +227,7 @@ export type WorkerProxy<D> = ProxyDataWithSymbolKeys<D> & {
   [revokeSymbol]: (options?: { derived?: boolean } | boolean | 0 | 1) => void;
 };
 
-type CarrierProxy<D> = PromiseLike<ReceivedData<D>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
+export type CarrierProxy<D> = PromiseLike<ReceivedData<D>> & // 逐层访问的情况，如 const { layer1 } =  await data; const layer2 = await layer1.layer2
   ProxyDataWithSymbolKeys<D, true>; // 链式访问的情况，如 const layer2 = await data.layer1.layer2
 
 // 对应数据为对象的 Worker Proxy
