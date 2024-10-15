@@ -544,7 +544,7 @@ export class WorkerHandler<A extends CommonActions> {
 
     this.messageChannelsSet.add({ messageChannel, readyState });
 
-    // sendPort 用于将从 worker 中接收到的数据发送给 recievePort，recievePort 会被用于生成 messageSource，作为 this.execute() 的返回值暴露出去
+    // sendPort 用于将从 worker 中接收到的数据发送给 receivePort，receivePort 会被用于生成 messageSource，作为 this.execute() 的返回值暴露出去
     const { port1: sendPort, port2: receivePort } = messageChannel;
     sendPort.start();
     receivePort.start();
@@ -750,11 +750,11 @@ export class WorkerHandler<A extends CommonActions> {
       this.handleListeners(msgListenerMap, false);
       // readyState 的改变是需要立马生效的，所以不在定时器中执行
       readyState.current = 2;
-      // 在 promise 被 resolve 之前的一瞬间，如果此时 action 从 Worker 获取到了 msg 响应（非终止消息），那么还此时需要使用 messageChannel 来将响应传递给 messageSource，因此关闭 messageChannel 中的 port 的操作需要异步执行
+      // 在 promise 被 resolve 之前的一瞬间，如果此时 action 从 Worker 获取到了 msg 响应（非终止消息），且由于传输消息需要时间，因此关闭 messageChannel 中的 port 的操作需要延迟执行
       setTimeout(() => {
         messageChannel.port1.close();
         messageChannel.port2.close();
-      });
+      }, 5000);
     };
 
     // 之所以要在 then() 和 catch() 的回调中中分别执行一次 clearEffects()，而不在 finally() 的回调中执行，是为了保证当用户在 promise 的 then() 或 catch() 的回调中访问到的 readyState.current 一定为 2，而 finally() 中的回调的执行晚于 then() 和 catch() 的回调的执行
@@ -1731,7 +1731,7 @@ export class WorkerHandler<A extends CommonActions> {
     ];
 
     // listenerSet 中存放通过 messageSource.addEventListener() 添加的监听器信息，当本次通信完毕后移除 listenerSet 中的所有监听器
-    let listenerSet = new Set<ListenerTuple>();
+    const listenerSet = new Set<ListenerTuple>();
 
     const newPromise: Promise<ExtendedMsgData<A, GetDataType<A, K>>> =
       new Promise((resolve, reject) => {
@@ -1746,7 +1746,7 @@ export class WorkerHandler<A extends CommonActions> {
             reject(res);
           })
           .finally(() => {
-            // 如果 promise 被 resolve 之前的一瞬间，action 从 Worker 获取到了 msg 响应（非终止消息），那么添加给 receivePort 的监听器还需要用来接收这次消息的数据，因此将移除监听器的操作异步执行
+            // 如果 promise 被 resolve 之前的一瞬间，action 从 Worker 获取到了 msg 响应（非终止消息），那么添加给 receivePort 的监听器还需要用来接收这次消息的数据，且由于 messageChannel 传输数据需要时间，因此将移除监听器的操作延迟执行
             setTimeout(() => {
               listenerSet.forEach((listenerTuple) => {
                 receivePort.removeEventListener(
@@ -1755,7 +1755,7 @@ export class WorkerHandler<A extends CommonActions> {
                 );
               });
               listenerSet.clear();
-            });
+            }, 5000);
           });
       });
 
