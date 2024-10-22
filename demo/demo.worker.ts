@@ -72,6 +72,8 @@ export type DemoActions = {
 
   returnRejectedPromiseInObj: () => ActionResult<{ promise: Promise<never> }>;
 
+  postNumReturnStr: (this: number) => ActionResult<string>;
+
   // Insert ActionTypes above this line
 };
 
@@ -244,6 +246,11 @@ onmessage = createOnmessage<DemoActions>({
         }, 400);
       }),
     };
+  },
+
+  async postNumReturnStr() {
+    this.$post(1);
+    this.$end("1");
   },
 
   // Insert Actions above this line

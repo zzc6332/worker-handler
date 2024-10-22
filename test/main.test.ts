@@ -15,6 +15,7 @@ import worker, {
   postAndEndWithRejectedPromiseExecutor,
   returnResolvedPromiseInObjExecutor,
   returnRejectedPromiseInObjExecutor,
+  postNumReturnStrExecutor,
   // Insert Executors to be imported above this line.
 } from "demo/demo.main";
 import {
@@ -555,6 +556,29 @@ describe("actions", function () {
           'test string of "returnRejectedPromiseInObj"'
         );
       }
+    });
+  });
+
+  //#endregion
+
+  //#region - postNumReturnStr
+
+  describe("postNumReturnS t r", function () {
+    let postNumReturnStrPort: ReturnType<typeof postNumReturnStrExecutor>;
+
+    it("event", function () {
+      postNumReturnStrPort = postNumReturnStrExecutor();
+
+      postNumReturnStrPort.addEventListener("message", (e) => {
+        expect(e.data).to.equal(1);
+        typeCheck<number>(e.data);
+      });
+    });
+
+    it("promise", async function () {
+      const { data } = await postNumReturnStrPort.promise;
+      expect(data).to.equal("1");
+      typeCheck<string>(data);
     });
   });
 

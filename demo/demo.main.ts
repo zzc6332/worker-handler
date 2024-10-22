@@ -53,6 +53,8 @@ export const returnResolvedPromiseInObjExecutor = () =>
 export const returnRejectedPromiseInObjExecutor = () =>
   worker.execute("returnRejectedPromiseInObj");
 
+export const postNumReturnStrExecutor = () => worker.execute("postNumReturnStr");
+
 // Insert Executors above this line
 
 export default worker;
