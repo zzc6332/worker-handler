@@ -337,27 +337,27 @@ interface MessageEventX<A extends CommonActions, D>
   extends Omit<MessageEvent, "data">,
     ExtendedMsgData<A, D, "event"> {}
 
-interface MessageSource<D, A extends CommonActions>
+interface MessageSource<D, P, A extends CommonActions>
   extends Omit<
     MessagePort,
     "addEventListener" | "onmessage" | "onmessageerror"
   > {
   promise: Promise<ExtendedMsgData<A, D>>;
   readonly readyState: ReadyState["current"];
-  onmessage: ((this: MessagePort, ev: MessageEventX<A, D>) => any) | null;
+  onmessage: ((this: MessagePort, ev: MessageEventX<A, P>) => any) | null;
   onmessageerror:
     | ((this: MessagePort, ev: MessageEventX<A, any>) => any)
     | null;
   addEventListener(
     type: "message",
-    listener: (this: MessagePort, ev: MessageEventX<A, D>) => any,
+    listener: (this: MessagePort, ev: MessageEventX<A, P>) => any,
     options?: boolean | AddEventListenerOptions
-  ): MessageSource<D, A>;
+  ): MessageSource<D, P, A>;
   addEventListener(
     type: "messageerror",
     listener: (this: MessagePort, ev: MessageEventX<A, any>) => any,
     options?: boolean | AddEventListenerOptions
-  ): MessageSource<D, A>;
+  ): MessageSource<D, P, A>;
 }
 
 type ReadyState = { current: 0 | 1 | 2 };
@@ -1759,7 +1759,13 @@ export class WorkerHandler<A extends CommonActions> {
           });
       });
 
-    const messageSource: MessageSource<GetDataType<A, K>, A> = {
+    const messageSource: MessageSource<
+      GetDataType<A, K>,
+      unknown extends ThisParameterType<A[K]>
+        ? GetDataType<A, K>
+        : ThisParameterType<A[K]>,
+      A
+    > = {
       ...boundReceivePort,
       readyState: readyState.current,
       addEventListener: (type, extendedListener) => {

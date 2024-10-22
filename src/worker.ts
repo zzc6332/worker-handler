@@ -116,15 +116,21 @@ export type GetDataType<A extends CommonActions, K extends keyof A> =
 export type ActionResult<D extends any = void> = Promise<D | void>;
 
 export type CommonActions = {
-  [K: string]: (this: ActionThis, ...args: any[]) => ActionResult<any>;
+  [K: string]: (...args: any[]) => ActionResult<any>;
 };
 
-export type ActionWithThis<
+export type ActionsWithThis<
   A extends CommonActions,
   D extends true | any = true,
 > = {
   [K in keyof A]: (
-    this: ActionThis<A, D extends true ? GetDataType<A, K> : any>,
+    this: unknown extends ThisParameterType<A[K]> // 判断定义 Action 时没有指定 this 的类型
+      ? ActionThis<A, D extends true ? GetDataType<A, K> : any> // 如果没有指定的情况，那么 ActionThis 只需要指定 $end() 的参数类型
+      : ActionThis<
+          A,
+          D extends true ? GetDataType<A, K> : any,
+          D extends true ? ThisParameterType<A[K]> : any
+        >, // 如果指定了的情况，那么需要额外指定 $post() 的参数类型
     ...args: Parameters<A[K]>
   ) => ReturnType<A[K]>;
 };
@@ -136,10 +142,11 @@ type PostMsgWithId<D extends any = any> = [D] extends [undefined]
 type ActionThis<
   A extends CommonActions = CommonActions,
   D extends any = any,
+  P extends any = D,
 > = {
-  $post: PostMsgWithId<D>;
+  $post: PostMsgWithId<P>;
   $end: PostMsgWithId<D>;
-} & ActionWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
+} & ActionsWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
 
 //#endregion
 
@@ -489,7 +496,7 @@ function depositeData(temporaryProxyIdForDepositing: number, data: any) {
 
 // worker 中处理消息的核心是 createOnmessage，接收从 Main 传来的 MsgToWorker 类型的消息，根据不同的消息标识来分别处理
 export function createOnmessage<A extends CommonActions>(
-  actions: ActionWithThis<A>
+  actions: ActionsWithThis<A>
 ) {
   return async (ev: MessageEvent<MsgToWorker>) => {
     const { type } = ev.data;
@@ -582,7 +589,7 @@ export function createOnmessage<A extends CommonActions>(
         }
       };
 
-      const boundActions = { ...actions } as ActionWithThis<A, any>;
+      const boundActions = { ...actions } as ActionsWithThis<A, any>;
 
       const actionThis: ActionThis<A> = {
         $post: postMsgWithId,
@@ -606,10 +613,7 @@ export function createOnmessage<A extends CommonActions>(
         );
       } else {
         try {
-          const data = await action.apply(
-            actionThis as ActionThis<A, GetDataType<A, keyof A>>,
-            payloadList
-          );
+          const data = await action.apply(actionThis as any, payloadList);
           if (data !== undefined) {
             postActionMessage({
               data,
