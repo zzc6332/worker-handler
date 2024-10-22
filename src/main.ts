@@ -1769,6 +1769,7 @@ export class WorkerHandler<A extends CommonActions> {
         );
         receivePort.addEventListener(type, listener);
         listenerSet.add([type, listener]);
+        messageSource.promise.catch(() => {});
         return messageSource;
       },
       promise: newPromise,
