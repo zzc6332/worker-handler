@@ -118,6 +118,11 @@ async function execute(caseNames) {
   const newContents = await Promise.all(inserteds);
 
   // 将原始文件内容放入 /scripts/backups 中备份
+  try {
+    await fs.access(backupsPath);
+  } catch (error) {
+    await fs.mkdir(backupsPath);
+  }
   await fs.rm(backupsPath, { recursive: true });
   for (k in backups) {
     const filePath = path.join(__dirname, "/backups" + k);
