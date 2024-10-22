@@ -121,15 +121,15 @@ export type CommonActions = {
 
 export type ActionsWithThis<
   A extends CommonActions,
-  D extends true | any = true,
+  S extends boolean = true, // 是否使用严格类型，默认开启；严格类型关闭时，ActionThis 中的 $post 和 $end 都将变为 any；只在通过 this 访问其它 Action 时，这些 Action 的 this 是不开启严格模式的，因为这个场景下用不到 $post 和 $end，且开启的话会出现类型冲突
 > = {
   [K in keyof A]: (
     this: unknown extends ThisParameterType<A[K]> // 判断定义 Action 时没有指定 this 的类型
-      ? ActionThis<A, D extends true ? GetDataType<A, K> : any> // 如果没有指定的情况，那么 ActionThis 只需要指定 $end() 的参数类型
+      ? ActionThis<A, S extends true ? GetDataType<A, K> : any> // 如果没有指定的情况，那么 ActionThis 只需要指定 $end() 的参数类型
       : ActionThis<
           A,
-          D extends true ? GetDataType<A, K> : any,
-          D extends true ? ThisParameterType<A[K]> : any
+          S extends true ? GetDataType<A, K> : unknown,
+          S extends true ? ThisParameterType<A[K]> : unknown
         >, // 如果指定了的情况，那么需要额外指定 $post() 的参数类型
     ...args: Parameters<A[K]>
   ) => ReturnType<A[K]>;
@@ -144,9 +144,9 @@ type ActionThis<
   D extends any = any,
   P extends any = D,
 > = {
-  $post: PostMsgWithId<P>;
-  $end: PostMsgWithId<D>;
-} & ActionsWithThis<A, any>; // 为什么这里要将 D（data） 指定为 any？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 any 即可。
+  $post: unknown extends P ? any : PostMsgWithId<P>; // D 和 P 传入的是 unknown 时，放宽类型为 any，否则由于 PostMsgWithId 中使用了条件类型，调用时会产生类型冲突
+  $end: unknown extends D ? any : PostMsgWithId<D>;
+} & ActionsWithThis<A, false>; // 为什么这里将 S 指定为 false？因为如果这里获取到了具体的 data 的类型，那么 this 中访问到的其它 Action 的 data 类型会被统一推断为该类型。如此，当在一个 Action 中使用 this 访问其它 Action 时，如果它们的 data 的类型不同，就会出现类型错误。既然在 Action 中通过 this 调用其它 Action 时，不会触发它们的消息传递，只会获取到它们的返回值，因此将 this 中访问到的 Action 中的 data 类型设置为 false。
 
 //#endregion
 
