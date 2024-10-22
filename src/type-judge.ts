@@ -29,13 +29,14 @@ export type StructuredCloneable<T = never> =
   | Array<StructuredCloneable<T>>
   | Map<StructuredCloneable<T>, StructuredCloneable<T>>
   | Set<StructuredCloneable<T>>
-  | ArrayBuffer
   | Boolean
   | String
   | DataView
   | Date
   | RegExp
+  | ArrayBuffer
   | TypedArray
+  | Blob
   | StructuredCloneableError
   | T;
 
