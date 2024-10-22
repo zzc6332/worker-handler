@@ -129,7 +129,7 @@ export type ActionWithThis<
   ) => ReturnType<A[K]>;
 };
 
-type PostMsgWithId<D extends any = any> = D extends undefined
+type PostMsgWithId<D extends any = any> = [D] extends [undefined]
   ? (data?: undefined, transfer?: []) => void
   : (data: Exclude<D, undefined>, transfer?: Transferable[]) => void;
 
