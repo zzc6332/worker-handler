@@ -176,7 +176,7 @@ export type DemoActions = {
 onmessage = createOnmessage<DemoActions>({
   async pingLater(delay) {
     setTimeout(() => {
-      this.$end("Worker recieved a message from Main " + delay + "ms ago.");
+      this.$end("Worker received a message from Main " + delay + "ms ago.");
     }, delay);
   }
 });
@@ -241,18 +241,20 @@ onmessage = createOnmessage<DemoActions>({
 
 Calling `this.$post()` within `Action` can pass the message to `Main` through `EventTarget`.
 
-The first parameter that `$end()` receives is the message data to be passed, and the optional second parameter is `transfer` (If `"auto"`is passed in, it will automatically identify all `transferable objects` in the message as `transfer`).
+The first parameter that `this.$opst()` receives is the message data to be passed, and the optional second parameter is `transfer` (If `"auto"` is passed in, it will automatically identify all `transferable objects` in the message as `transfer`).
 
 ❗**Attention**: The `Action` cannot be defined as an arrow function if `this.$post()` needs to be called.
 
-Once `this.$post()` is called correctly in the `Action`, it will immediately trigger the `message` event of the corresponding `MessageSource` (which extends methods similar to those in [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget)) recieved in `Main`. The message can be received by setting the `onmessage` callback or by using `addEventListener()` to listen for the `message` event of `MessageSource`. If you need to receive the message through `Promise` as well, using `addEventListener()` it is recommended. `MessageSource.addEventListener()` will return `MessageSource` itself, allowing for convenient chaining to obtain the `Promise`. Below is an example of responding with messages through both `EventTarget` and `Promise`:
+Once `this.$post()` is called correctly in the `Action`, it will immediately trigger the `message` event of the corresponding `MessageSource` (which extends methods similar to those in [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget)) received in `Main`. The message can be received by setting the `onmessage` callback or by using `addEventListener()` to listen for the `message` event of `MessageSource`. If you need to receive the message through `Promise` as well, using `addEventListener()` it is recommended. `MessageSource.addEventListener()` will return `MessageSource` itself, allowing for convenient chaining to obtain the `Promise`.
+
+Below is an example of responding with messages through both `EventTarget` and `Promise`:
 
 ~~~typescript
 // demo.worker.ts
 import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
-  // The type of the message which is passed through the `EventTarget` is also defined by the return type of the `Action`.
+  // The type of the data passed through the `EventTarget` is also specified by the return type of the `Action` by default.
   pingInterval: (
     interval: number,
     isImmediate: boolean,
@@ -294,6 +296,45 @@ demoWorker
 // If you use `addEventListener()` to listen for the `MessageSource`, it will return the `MessageSource` itself, allowing chaining calls.
   .promise.then((res) => {
     console.log(res.data);
+  });
+~~~
+
+<span id="Different_Types">`The type of data passed by `this.$post()` can be specified not only by the return type of the `Action`, but also by explicitly defining the type of `this` within `Action`. You only need to set the type of `this` to the data type you intend to pass when defining the type of the `Action`. This doesn't actually define the type of `this` directly; instead, `worker-handler` handles it internally, modifying the parameter type of `this.$post()` as well as the type of data received in the main thread.</span>
+
+Below is an example of responding with different data types of messages through both `EventTarget` and `Promise`:
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  postNumReturnStr: (this: number) => ActionResult<string>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async postNumReturnStr() {
+    this.$post(1);
+    this.$end("1");
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+demoWorker
+  .execute("postNumReturnStr")
+  .addEventListener("message", (e) => {
+    console.log(e.data); // e.data will be inferred as a number type.
+  })
+  .promise.then((res) => {
+    console.log(res.data); // res.data will be inferred as a string type.
   });
 ~~~
 
@@ -1366,3 +1407,7 @@ If no generic parameters are passed, it is equivalent to `ActionResult<void>`.
 ### `v0.2.5`
 
 - <a href="#Promise_Object_Message" target="_self">Supports Promise Object Message feature.</a>
+
+### `v0.2.10`
+
+- <a href="#Different_Types" target="_self">Allowing `this.$post()` and `this.$end()` to send different types of data.</a>

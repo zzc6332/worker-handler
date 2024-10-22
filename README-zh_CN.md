@@ -246,18 +246,20 @@ onmessage = createOnmessage<DemoActions>({
 
 在 `Action` 中调用 `this.$post()` 可以将消息以 `EventTarget` 形式传递给 `Main`。
 
-`$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`（如果传入 `"auto"`，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
+`this.$post()` 接收的第一个参数是要传递的消息数据，可选第二个参数是要转移的 `transfer`（如果传入 `"auto"`，那么会自动识别消息中的所有可转移对象作为 `transfer`）。
 
 ❗**注意**：这种情况下 `Action` 不能使用箭头函数定义。
 
-一旦 `Action` 中的 `this.$post()` 被正确地调用，则会立刻触发 `Main` 中收到的对应 `MessageSource`（它拓展了类似 [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget) 中的方法） 的 `message` 事件。通过设置 `onmessage` 回调或使用 `addEventListener()` 监听 `MessageSource` 的 `message` 事件可以接收到该消息。如果需要同时获取 `Promise` 形式的消息，则推荐使用 `addEventListener()` 的方式监听，`MessageSource.addEventListener()` 会将 `MessageSource` 自身返回，可以方便地链式调用再获取到 `Promise`。以下是一个同时使用 `EventTarget` 和 `Promise` 形式响应消息的示例：
+一旦 `Action` 中的 `this.$post()` 被正确地调用，则会立刻触发 `Main` 中收到的对应 `MessageSource`（它拓展了类似 [EventTarget](https://developer.mozilla.org/zh-CN/docs/Web/API/EventTarget) 中的方法） 的 `message` 事件。通过设置 `onmessage` 回调或使用 `addEventListener()` 监听 `MessageSource` 的 `message` 事件可以接收到该消息。如果需要同时获取 `Promise` 形式的消息，则推荐使用 `addEventListener()` 的方式监听，`MessageSource.addEventListener()` 会将 `MessageSource` 自身返回，可以方便地链式调用再获取到 `Promise`。
+
+以下是一个同时使用 `EventTarget` 和 `Promise` 形式响应消息的示例：
 
 ~~~typescript
 // demo.worker.ts
 import { ActionResult, createOnmessage } from "worker-handler/worker";
 
 export type DemoActions = {
-  // EventTarget 形式传递的消息类型也通过 Action 的返回值类型定义
+  // EventTarget 形式传递的数据的类型默认情况下也是通过 Action 的返回值类型定义
   pingInterval: (
     interval: number,
     isImmediate: boolean,
@@ -299,6 +301,45 @@ demoWorker
   .promise.then((res) => {
     console.log(res.data);
   });
+~~~
+
+<span id="Different_Types">`this.$post()` 传递的数据的类型除了可以通过 `Action` 的返回值类型指定，也可以通过显式定义 `Action` 的 `this` 类型指定，只需要在定义 `Action` 类型时将 `this` 的类型指定为要传递的数据的类型即可。这么做并不会真的直接将 `this` 的类型定义为该类型，`worker-handler` 内部会进行处理，改写这个 `this.$post()` 的参数的类型以及主线程中接收到的对应数据的类型。</span>
+
+以下是一个分别使用 `EventTarget` 和 `Promise` 形式响应不同数据类型的消息的示例：
+
+~~~typescript
+// demo.worker.ts
+import { ActionResult, createOnmessage } from "worker-handler/worker";
+
+export type DemoActions = {
+  postNumReturnStr: (this: number) => ActionResult<string>;
+};
+
+onmessage = createOnmessage<DemoActions>({
+  async postNumReturnStr() {
+    this.$post(1);
+    this.$end("1");
+  },
+});
+~~~
+
+~~~typescript
+// demo.main.ts
+import { WorkerHandler } from "worker-handler/main";
+import { DemoActions } from "./demo.worker";
+
+const demoWorker = new WorkerHandler<DemoActions>(
+  new Worker(new URL("./demo.worker.ts", import.meta.url))
+);
+
+demoWorker
+  .execute("postNumReturnStr")
+  .addEventListener("message", (e) => {
+    console.log(e.data); // e.data 会被推导为 number 类型
+  })
+  .promise.then((res) => {
+    console.log(res.data); // res.data 会被推导为 string 类型
+  });z
 ~~~
 
 ## <span id="Worker_Proxy">Worker Proxy</span>
@@ -1375,3 +1416,7 @@ init();
 ### `v0.2.5`
 
 - <a href="#Promise_Object_Message" target="_self">支持 Promise 对象消息特性。</a>
+
+### `v0.2.10`
+
+- <a href="#Different_Types" target="_self">支持让 this.$post() 和 this.$end() 发送不同类型的数据。</a>
