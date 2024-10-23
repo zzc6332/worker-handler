@@ -146,6 +146,7 @@ export function judgeStructuredCloneable(
   }
 ): boolean {
   const isArrayBuffer = data instanceof ArrayBuffer;
+  const isBlob = data instanceof Blob;
   const isBoolean = data instanceof Boolean;
   const isDataView = data instanceof DataView;
   const isDate = data instanceof Date;
@@ -181,6 +182,7 @@ export function judgeStructuredCloneable(
   const isTransferable = judgeTransferableObj(data);
   if (
     isArrayBuffer ||
+    isBlob ||
     isBoolean ||
     isDataView ||
     isDate ||
