@@ -1,6 +1,6 @@
 {
   "name": "worker-handler",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "scripts": {
     "test": "karma start",
     "build": "webpack --mode=production --node-env=production",
